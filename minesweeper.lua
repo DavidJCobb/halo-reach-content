@@ -102,6 +102,7 @@ alias temp_obj_01  = global.object[3]
 alias temp_obj_02  = global.object[4]
 alias temp_obj_03  = global.object[5]
 alias temp_obj_04  = global.object[6]
+alias oni_floor    = global.object[7]
 alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[2]
 --
@@ -327,7 +328,9 @@ do  -- construct board
       --
       alias row_a_start = temp_obj_02
       alias row_b_start = temp_obj_03
-      first_cell = board_center.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, -45, -45, 0, none)
+      first_cell = board_center.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, 0, 0, 0, none)
+      first_cell.attach_to(board_center, -45, -45, 0, relative) -- ensure active position
+      first_cell.detach()
       first_cell.is_script_created = 1
       first_cell.set_shape(box, 8, 8, 10, 10)
       temp_obj_00 = first_cell
@@ -348,19 +351,9 @@ do  -- construct board
          block = current_object.place_at_me(block_1x1_flat, "minesweep_cell_extra", never_garbage_collect, 0, 0, 0, none)
          block.attach_to(current_object, 0, 0, 0, absolute)
          block.detach()
+         block.set_scale(1) -- poor attempt at making the blocks invisible for now
          block.is_script_created = 1
          block.cell_marker = current_object
-         --
-         --alias die_1 = temp_obj_01
-         --alias die_2 = temp_obj_02
-         --die_1 = block.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
-         --die_1.set_scale(95)
-         --die_1.attach_to(block, 0, 0, -6, absolute)
-         --block.decor_base = die_1
-         --die_2 = block.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
-         --die_2.set_scale(25)
-         --die_2.attach_to(block, 0, 0, -1, absolute)
-         --die_1.next_object = die_2
       end
       --
       -- We've constructed the board, so now, we need to randomly place mines.
@@ -368,10 +361,32 @@ do  -- construct board
       temp_int_01 = 0 -- set up state for next call
       randomize_mines()
       --
-      do -- TEMP TEST
-         temp_obj_00 = board_center.place_at_me(oni_van, none, none, 0, 0, 3, none)
-         temp_obj_00.set_shape_visibility(everyone)
-         temp_obj_00.set_shape(box, 15, 20, 20, 40)
+      -- Finally, let's give ourselves a floor.
+      --
+      temp_obj_00 = board_center.place_at_me(grid, none, never_garbage_collect, 0, 0, 0, none)
+      temp_obj_00.set_scale(50)
+      temp_obj_00.attach_to(board_center, 0, 0, 0, absolute)
+      temp_obj_00.detach()
+      board_center.set_shape(box, 90, 90, 1, 0)
+      board_center.set_shape_visibility(everyone)
+      --
+      -- Feature: ONI Floor
+      --
+      oni_floor = no_object
+      for each object with label "minesweep_onifloor" do
+         if current_object.spawn_sequence == board_center.spawn_sequence then
+            if oni_floor == no_object then
+               temp_obj_01 = current_object.place_at_me(grid, none, never_garbage_collect, 0, 0, 0, none)
+               temp_obj_01.set_scale(1)
+               temp_obj_01.attach_to(current_object, 0, 0, -100, absolute)
+               temp_obj_01.detach()
+               oni_floor = temp_obj_01.place_at_me(oni_van, none, never_garbage_collect, 0, 0, 0, none)
+               oni_floor.set_invincibility(1)
+               oni_floor.set_scale(1500)
+               oni_floor.attach_to(temp_obj_01, 60, 0, -90, absolute)
+            end
+         end
+         current_object.delete()
       end
    end
 end
@@ -383,6 +398,17 @@ if active_player == no_player then
    --
    for each player randomly do
       active_player = current_player
+   end
+end
+for each player do
+   temp_obj_00 = current_player.get_vehicle()
+   if temp_obj_00 == oni_floor then
+      current_player.biped.detach() -- force out of vehicle
+      --
+      -- ...and move them back to the board.
+      --
+      current_player.biped.attach_to(board_center, 0, 0, 5, absolute)
+      current_player.biped.detach()
    end
 end
 
