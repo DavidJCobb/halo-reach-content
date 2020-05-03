@@ -1,0 +1,346 @@
+
+
+--
+-- HALO CHESS IMPLEMENTATION IDEAS
+--
+-- GOAL: Reimplement Halo Chess using user-defined functions, in order to allow 
+-- for checkmate functionality -- removing the need to determine the winner by 
+-- honor rules.
+--
+
+-- Piece data is stored on the board square that the piece is standing on, not 
+-- the piece biped itself. As with my Minesweeper design, all object.object 
+-- variables are expended on linking pieces with their neighbors, so in order 
+-- to track additional information (e.g. linking board spaces to their bipeds) 
+-- we will need to create an "extra data" object for each space, which will 
+-- have a one-way link to its space.
+alias coord_x       = object.number[0]
+alias coord_y       = object.number[1]
+alias piece_type    = object.number[2]
+alias is_valid_move = object.number[3]
+alias is_king_move  = object.number[4] -- used to check whether a king is checkmated by a pawn
+alias owner         = object.player[0]
+alias space_left    = object.object[0]
+alias space_right   = object.object[1]
+alias space_above   = object.object[2]
+alias space_below   = object.object[3]
+
+-- Global state
+alias player_black = global.player[0]
+alias player_white = global.player[1]
+
+-- TEMPORARY: global.number[0]
+-- TEMPORARY: global.number[1]
+-- TEMPORARY: global.number[2]
+
+alias piece_type_none   = 0
+alias piece_type_pawn   = 1
+alias piece_type_knight = 2
+alias piece_type_bishop = 3
+alias piece_type_rook   = 4
+alias piece_type_queen  = 5
+alias piece_type_king   = 6
+
+function check_valid_move()
+   --
+   -- This function can be used both for determining what squares the player is 
+   -- allowed to move their current piece to, and determining whether a check or 
+   -- checkmate is in progress. In the former case, you'd want to run a for loop 
+   -- to reset object.is_valid_move to 0 for all chess squares BEFORE calling 
+   -- this function. In the latter case, you'd run that loop once, and then call 
+   -- this function on all of the attacker's pieces; then, check whether the 
+   -- defender's king can move to any square for which that variable is still 0.
+   --
+   -- In order to check whether the king is checkmated by a pawn, you will need 
+   -- to set (object.is_king_move) on all of the spaces that the king can move 
+   -- to before calling this function. If you are running checks for any other 
+   -- reason (e.g. "is the king currently in check" or "can the player move 
+   -- their piece here"), then you must set that variable to 0.
+   --
+   -- Note, when establishing a player's legal moves, that if a player has no 
+   -- legal moves but is not in check, then the game ends in a draw; if they 
+   -- have no legal moves and are in check, then they lose. Note also that if 
+   -- the player is in check, then they are only allowed to move their king. 
+   -- Finally, note that this function does not check whether a target space 
+   -- would put a king in check; you will have to let the player move their 
+   -- king, then test whether their move has put their own king in check, and 
+   -- if so, revert the move.
+   --
+   alias current_piece = global.object[0]
+   alias target_space  = global.object[1]
+   alias temporary_obj = global.object[2]
+   alias x_diff        = global.number[0]
+   alias y_diff        = global.number[1]
+   alias working       = global.number[2]
+   --
+   function bishop_check()
+      target_space = current_piece
+      function upperleft()
+         target_space = target_space.space_left
+         target_space = target_space.space_above
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            upperleft()
+         end
+      end
+      upperleft()
+      --
+      target_space = current_piece
+      function upperright()
+         target_space = target_space.space_right
+         target_space = target_space.space_above
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            upperright()
+         end
+      end
+      upperright()
+      --
+      target_space = current_piece
+      function lowerleft()
+         target_space = target_space.space_left
+         target_space = target_space.space_below
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            lowerleft()
+         end
+      end
+      lowerleft()
+      --
+      target_space = current_piece
+      function lowerright()
+         target_space = target_space.space_right
+         target_space = target_space.space_below
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            lowerright()
+         end
+      end
+      lowerright()
+   end
+   function rook_check()
+      target_space = current_piece
+      function left()
+         target_space = target_space.space_left
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            left()
+         end
+      end
+      left()
+      --
+      target_space = current_piece
+      function right()
+         target_space = target_space.space_right
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            right()
+         end
+      end
+      right()
+      --
+      target_space = current_piece
+      function up()
+         target_space = target_space.space_above
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            up()
+         end
+      end
+      up()
+      --
+      target_space = current_piece
+      function down()
+         target_space = target_space.space_below
+         if target_space != no_object and target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+            down()
+         end
+      end
+      down()
+   end
+   if current_piece.piece_type == piece_type_bishop
+   or current_piece.piece_type == piece_type_queen
+   then
+      bishop_check()
+   end
+   if current_piece.piece_type == piece_type_rook
+   or current_piece.piece_type == piece_type_queen
+   then
+      rook_check()
+   end
+   if current_piece.piece_type == piece_type_king then
+      function _set_if() -- if we inlined this, each copy would be a separate trigger. since they're all identical, let's just make it a function so we're not compiling tons of duplicate data
+         if target_space.piece_type == piece_type_none then
+            target_space.is_valid_move = 1
+         end
+      end
+      target_space = current_piece.space_left
+      _set_if()
+      target_space = target_space.space_top -- upper-left
+      _set_if()
+      target_space = current_piece.space_right
+      _set_if()
+      target_space = target_space.space_below -- lower-right
+      _set_if()
+      target_space = current_piece.space_above
+      _set_if()
+      target_space = target_space.space_right -- upper-right
+      _set_if()
+      target_space = current_space.space_below
+      _set_if()
+      target_space = target_space.space_left -- lower-left
+      _set_if()
+   end
+   if current_piece.piece_type == piece_type_pawn then
+      target_space  = current_piece.space_above
+      temporary_obj = current_piece.space_above
+      if current_piece.owner == player_black then -- black starts north and moves south
+         target_space  = current_piece.space_below
+         temporary_obj = target_space.space_below
+      end
+      if target_space.piece_type == piece_type_none then
+         target_space.is_valid_move = 1
+      end
+      --
+      -- TODO: Check whether double-forward movement to space (temporary_obj) 
+      -- is possible.
+      --
+      
+      --
+      -- Check whether diagonal capture is possible.
+      --
+      function _check_diagonal() -- if we inlined this, each copy would be a separate trigger. since they're all identical, let's just make it a function so we're not compiling tons of duplicate data
+         temporary_obj.is_valid_move |= temporary_obj.is_king_move
+         if  temporary_obj.piece_type != piece_type_none
+         and temporary_obj.owner != current_piece.owner
+         then
+            temporary_obj.is_valid_move = 1
+         end
+      end
+      temporary_obj = target_space.space_left
+      _check_diagonal()
+      temporary_obj = target_space.space_right
+      _check_diagonal()
+      --
+      -- TODO: If the player actually moves their pawn diagonally, then we need 
+      -- to check for a capture en passant. If an enemy pawn uses its initial 
+      -- move to travel two spaces forward and lands next to your pawn, then 
+      -- you can (on the very next turn only) move your pawn diagonally behind 
+      -- the enemy pawn *and* capture that enemy pawn. This is called "capturing 
+      -- en passant," or "in passing."
+      --
+      -- We'll also have to handle pawn promotion at the time that a pawn is 
+      -- moved to the end of the board. The ONLY limitation on pawn promotion 
+      -- is that a pawn cannot be promoted to a king or to a pawn (i.e. you MUST 
+      -- promote the pawn; you cannot leave it unpromoted and immobilized).
+      --
+   end
+end
+
+function is_king_in_check()
+   alias king = global.object[0] -- which king to check
+   for each object with label "board_space" do
+      current_object.is_valid_move = 0
+      current_object.is_king_move  = 0
+   end
+   --
+   -- Flag every space within reach of the king as a "king move space," so that 
+   -- enemy pawn movement checks treat these spaces the same way they would an 
+   -- occupied space (i.e. the pawn tests as being able to diagonally capture 
+   -- onto these spaces). Don't bother checking whether the king can actually 
+   -- move to these spaces (i.e. whether they are unoccupied). Nothing else 
+   -- needs us to check that from here.
+   --
+   alias temporary_obj = global.object[2]
+   temporary_obj = current_piece.space_left
+   temporary_obj.is_king_move = 1
+   temporary_obj = temporary_obj.space_top -- upper-left
+   temporary_obj.is_king_move = 1
+   temporary_obj = current_piece.space_right
+   temporary_obj.is_king_move = 1
+   temporary_obj = temporary_obj.space_below -- lower-right
+   temporary_obj.is_king_move = 1
+   temporary_obj = current_piece.space_above
+   temporary_obj.is_king_move = 1
+   temporary_obj = temporary_obj.space_right -- upper-right
+   temporary_obj.is_king_move = 1
+   temporary_obj = current_space.space_below
+   temporary_obj.is_king_move = 1
+   temporary_obj = temporary_obj.space_left -- lower-left
+   temporary_obj.is_king_move = 1
+   --
+   alias king_player = global.player[0]
+   king_player = king.owner
+   for each object with label "board_space" do
+      if current_object.piece_type != piece_type_none and current_object.owner != king_player then
+         global.object[0] = current_object -- parameter for next function call
+         check_valid_move()
+      end
+   end
+   --
+   -- Now that all of the data we need is set up, we can check whether the king 
+   -- is in check, and whether they're in checkmate. We'll consider them to be 
+   -- in checkmate by default, and free them from checkmate if the king has any 
+   -- legal moves that are not vulnerable to enemy pieces. In addition to being 
+   -- more efficient, this approach also means that if the king has no legal 
+   -- moves (e.g. they are totally boxed in by adjacent pieces), we'll properly 
+   -- flag them as being in checkmate.
+   --
+   alias king_in_checkmate = global.number[0]
+   alias king_in_check     = global.number[1]
+   king_in_check     = king.is_valid_move -- can the enemy move to where the king is?
+   king_in_checkmate = 1
+   for each object with label "board_space" do
+      if  current_object.is_king_move  == 1 -- this space is within reach of the king we're testing
+      and current_object.is_valid_move == 0 -- no enemy can move here
+      and current_object.piece_type == piece_type_none -- no one is standing here
+      then
+         king_in_checkmate = 0
+      end
+   end
+end
+
+do -- check for draw conditions
+   --
+   -- TODO: Check for the 75-move rule: if 75 moves pass without there being pawns on 
+   -- the board, and without either player capturing an enemy piece, then the game will 
+   -- automatically end in a draw. Some places allow players to manually request a draw 
+   -- at every 50-move threshold; I don't want to code in a mechanism for requesting a 
+   -- draw, but we can make the move threshold for an automatic draw a script_option.
+   --
+   
+   --
+   -- Check for insufficient material condition 1: one side only has a king, and 
+   -- the other side only has a king and one knight OR a king and one bishop.
+   --
+   alias knights_and_bishops = global.number[0]
+   alias any_other_pieces    = global.number[1]
+   any_other_pieces = 0
+   for each object with label "board_space" do
+      if current_object.piece_type == piece_type_knight
+      or current_object.piece_type == piece_type_bishop
+      then
+         knights_and_bishops += 1
+      end
+      if  current_object.piece_type != piece_type_king
+      and current_object.piece_type != piece_type_knight
+      and current_object.piece_type != piece_type_bishop
+      then
+         any_other_pieces = 1
+      end
+   end
+   if any_other_pieces == 0 then
+      if knights_and_bishops == 1 then
+         --
+         -- TODO: The insufficient material condition has been met. It is impossible 
+         -- for either team to checkmate the other, so the game should end on a draw.
+         --
+      end
+      --
+      -- TODO: Check for insufficient material condition 2: each side has one king and one 
+      -- bishop, and the bishops are both on the same color. We've already confirmed that 
+      -- the only pieces in play are kings, knights, and bishops.
+      --
+   end
+end
