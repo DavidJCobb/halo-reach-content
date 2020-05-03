@@ -2,13 +2,13 @@
  Repo for map and game variants I've modded
 
 ## Table of contents
-* <a href="#minesweeper">Minesweeper</a>
-* <a href="#race-plus">Race+</a>
-* <a href="#halo-chess-plus">Halo Chess+</a>
+* [Minesweeper](#minesweeper)
+* [Race+](#race-plus)
+* [Halo Chess+](#halo-chess-plus)
 
 ## Gametypes
-<a name="minesweeper"/>
-### Minesweeper
+
+### Minesweeper <a name="minesweeper"/>
 [In-development footage](https://www.youtube.com/watch?v=-sP8ElrIdek)
 
 Spawns a board with one scaled-up Fusion Coil per board cell. Shoot a coil to interact with the cell. The action taken depends on your weapon; Magnums uncover spaces while DMRs toggle flags. Minesweeper rules are fully implemented with the exception of guaranteeing that the first selected space is not a mine. All mines are randomly placed. Scoring options allow players to configure rewards or penalties for winning, losing, for each correctly-placed flag, and for each uncovered board cell.
@@ -25,8 +25,7 @@ Technical considerations include:
 
 As of this writing, this variant is not available for download. I want to try to add team support to the script or, failing that, hide the "Teams Enabled" option from the in-game menus. I'd also like to design the gametype so that in an FFA game, all players get an equal number of turns on the board (provided the round limit is high enough for everyone to play).
 
-<a name="race-plus"/>
-### Race+
+### Race+ <a name="race-plus"/>
 One of a set of "vanilla plus" gametypes I wish to make. Race+ adds the following options:
 
 * New vehicle options: Sabre, Civilian, or None. The "Civilian" option selects a random civilian vehicle for each round from the following set: electric cart; forklift; ONI van; pickup truck; semi truck. Most of these vehicles are quite slow and not actually enjoyable to race with, but the novelty factor should earn a chuckle or two.
@@ -39,21 +38,20 @@ When the game checks whether an object is inside of a shape boundary, it only ch
 
 The fix for this would be for the gametype to spawn invisible Hill Markers (hereafter: "nodes") and attach them to the vehicles at different points, e.g. one on each corner of a Warthog's "footprint." Checkpoint and landmine tests would check not only the vehicle itself, but also all of the vehicle's nodes. This would allow large vehicles (and *huge* ones, like Sabres) to properly test against checkpoints.
 
-<a name="halo-chess-plus"/>
-### Halo Chess+
+### Halo Chess+ <a name="halo-chess-plus"/>
 Planned. A small amount of code has been written, but not tested.
 
 Bungie's original Halo Chess is not Matchmaking-suitable in part because it relies on honor rules. The gametype pushes the game variant file format to the limit; the file uses almost all of the available space for script code, and likely doesn't have enough room for a checkmate implementation. However, it's worth noting the limitations that Halo Chess was built under.
 
 "Megalo" can refer to three things: the scripting *engine* that Bungie designed for Halo: Reach; the scripting *[bytecode](https://en.wikipedia.org/wiki/Bytecode)* that Bungie designed the engine to interpret; and the scripting *language* that Bungie designed to compile to that bytecode. The difference between these three things is important because the bytecode is actually capable of more than the language itself is capable of.
 
-The Megalo bytecode is known thanks to reverse-engineering efforts by kornman00, but nobody outside of Bungie and 343 Industries has ever seen the Megalo language itself. This means that in order to write Megalo scripts, we either have to hand-write data that corresponds 1:1 with the bytecode (the approach required by kornman00's KSoft.Tool), or design our own scripting language that compiles to that same bytecode -- and crucially, if the bytecode itself doesn't have the same limitations as Bungie's language, then our designed language doesn't need to adhere to those limitations either.
+The Megalo bytecode is known thanks to reverse-engineering efforts by kornman00, but nobody outside of Bungie and 343 Industries has ever seen the Megalo language itself. This means that in order to write Megalo scripts, we either have to hand-write data that corresponds 1:1 with the bytecode (the approach required by kornman00's KSoft.Tool), or design our own scripting language that compiles to that same bytecode &mdash; and crucially, if the bytecode itself doesn't have the same limitations as Bungie's language, then our designed language doesn't need to adhere to those limitations either.
 
 Many years ago, Bungie held a Megalo Q&A. The original has been lost, but pieces of it have been archived elsewhere. Per Bungie, the official Megalo language allows one to write a single program which is executed in its entirety; there are no function calls, gotos, or similar constructs. However, the Megalo bytecode allows for function calls via the same mechanism as nested blocks of code; every nested block of code is, in effect, an independent unit that is called, and you can compile such a unit to be called from multiple places. This allows for user-defined functions and recursion and, with those, a radically different approach to control flow.
 
 Bungie's original Halo Chess code is hard to decipher even when put into the Megalo language that I personally designed. It's a very complicated script, and admittedly I've only looked at it whenever I needed specific ideas from it. From what little I've been able to grasp when glancing at the code, the author set a single globally-scoped number to serve as a control flow enum; "functions" are implemented as if-statements which check the value of that number, with a task that requires multiple function calls essentially being performed over multiple executions of the full script. Repeating a task requires either multiple full executions of the script (with the variables and other baggage needed to track state) or multiple repetitions of the code for that task.
 
-With function calls and especially with recursion, things become easier and simpler: a task can be repeated an arbitrary number of times within a single execution of the script, with minimal boilerplate and no need to persist (across multiple executions of the script) any state related to the task itself. Moreover, recursion enables some simpler approaches to tracking which spaces a piece can move to. For example: if we link each board space to its cardinal neighbors (up, down, left, right) via the four available object.object variables, then we can check which spaces a Rook can move to using four recursive functions -- one for each direction. If we wrap those four recursive functions in a larger function, then we can use that larger function for both Rooks and Queens. The same approach, with slightly different code, can be taken for Bishops and Queens. Moreover, the *entire process* of tracking what spaces a piece can be moved to can be placed inside of a function, and that function can then be used to handle: allowing a player to move their piece; checking whether a king is in check; and checking whether a king is in checkmate:
+With function calls and especially with recursion, things become easier and simpler: a task can be repeated an arbitrary number of times within a single execution of the script, with minimal boilerplate and no need to persist (across multiple executions of the script) any state related to the task itself. Moreover, recursion enables some simpler approaches to tracking which spaces a piece can move to. For example: if we link each board space to its cardinal neighbors (up, down, left, right) via the four available object.object variables, then we can check which spaces a Rook can move to using four recursive functions &mdash; one for each direction. If we wrap those four recursive functions in a larger function, then we can use that larger function for both Rooks and Queens. The same approach, with slightly different code, can be taken for Bishops and Queens. Moreover, the *entire process* of tracking what spaces a piece can be moved to can be placed inside of a function, and that function can then be used to handle: allowing a player to move their piece; checking whether a king is in check; and checking whether a king is in checkmate:
 
 * We give every board space a number variable indicating whether it is a "valid move." We make sure that our function to check the available moves for a piece will only set that variable to 1, and never reset it to 0.
 
@@ -61,4 +59,4 @@ With function calls and especially with recursion, things become easier and simp
 
 * When we want to detect whether a king is in check, or in checkmate, we reset the "valid move" variable on all board spaces. We can then take our function to check a piece's available moves, and call that on *every* enemy piece. We can then check whether the king's current space is a "valid move" (check), and whether all of the spaces that a king can move to are "valid moves" (checkmate). (Some extra measures are needed to check for pawns checkmating a king, but these are trivial. It's also more efficient to check whether there exist any spaces that the king can move to and that are not "valid moves," and as a bonus that lets us properly handle a king that has been immobilized by adjacent pieces.)
 
-Which brings me to my point: I might -- I *might* -- be able to build a Matchmaking-suitable, non-honor-rule Halo Chess+.
+Which brings me to my point: I might &mdash; I *might* &mdash; be able to build a Matchmaking-suitable, non-honor-rule Halo Chess+.
