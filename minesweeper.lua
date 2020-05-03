@@ -1,3 +1,96 @@
+
+--
+-- MINESWEEPER
+--
+--  - Uses a pre-rotated Hill Marker to spawn a vertical board
+--
+--  - Every board cell has a Fusion Coil
+--
+--  - Shoot a cell with a Magnum to try and reveal it, or with a DMR to plant a 
+--    flag on it (game forces these weapons into the active player's hands)
+--
+
+--
+-- TODO:
+--
+--  - Fix display of cells' adjacent mine counts (we are not generating and 
+--    positioning the shapes correctly)
+--
+--     = My initial plan was to use shape boundaries to draw on each square, 
+--       but since Reach can only draw 64 shapes at a time, that isn't viable. 
+--       Any setup involving multiple objects will be unusable if it requires 
+--       more than three objects per cell, due to the "discoing" bug.
+--
+--       What we should do is use Dice to display the number of adjacent mines 
+--       for each square. We would spawn a Dice instead of a Block 1x1 Flat, 
+--       and have it copy its rotation from pre-rotated Dice that have been 
+--       placed away from the board by the Forger. For cells with mines in 7 
+--       or 8 adjacent cells, we can simply spawn an additional scaled-down 
+--       die, have it display 1 or 2, and merge it into a normal-size die that 
+--       displays 6.
+--
+--       That means that we need a Forge label that Forgers can apply to the 
+--       pre-placed Dice... and we need to check whether you even can pre-
+--       place six Dice. You should be able to, but maybe the limit was 4? I 
+--       don't remember.
+--
+--       This also means that yeah, we can't let spectators see the board 
+--       state unless we literally draw/build an entire second board at some 
+--       other location (marked by the Forger, of course).
+--
+--  - Behavior for selecting a mined cell
+--
+--     - Lose the round
+--
+--  - Behavior for selecting a safe cell
+--
+--     - Recursively reveal adjacent cells that don't have mines
+--
+--        - We can't actually do this with a recursive function because we 
+--          don't have a proper call stack i.e. with variables local to the 
+--          specific call. As such, our process will need to be as follows:
+--
+--          a) Convert the "reveal" flags to a separate enum on the cell: 
+--             0 = Not Revealed
+--             1 = Revealed
+--             2 = Queued for Recursive Reveal
+--
+--          b) Have a function which loops over all board cells. If a cell 
+--             has its reveal enum set to 2, then check its neighbors: any 
+--             neighbors that have their reveal enum set to 0 (and aren't 
+--             mined) should have it changed to 2. Then, change the current 
+--             cell's reveal enum from 2 to 1.
+--
+--             The function should "return" the number of cells that were 
+--             changed to 2, by way of a number variable.
+--
+--          c) Call that function until it returns 0, or until we have hit 
+--             some safety limit on the number of times to call it in a 
+--             single tick.
+--
+--          There is a simple optimization we can do to reduce the number 
+--          of times we need to run the function: when the user's selected 
+--          cell is revealed, process its neighbors from 0 to 2, and also 
+--          process the cardinal neighbors-neighbors, i.e.
+--
+--          xx2xx
+--          x222x
+--          22122
+--          x222x
+--          xx2xx
+--
+--          and *then* we use the function/loop.
+--
+--     - If all non-mined cells are revealed, win the round
+--
+--  - Add divergent behavior for Team versus FFA.
+--
+--     - Team: Players on the team take turns, each uncovering one cell.
+--
+--     - FFA: (Current script behavior.) A single player works to solve the 
+--       board.
+--
+
 alias board_size         = 9
 alias desired_mine_count = 10
 alias cell_length        = 10 -- a Block 1x1 Flat is 1.0 Forge units on a side
@@ -5,6 +98,8 @@ alias cell_length_neg    = -10
 
 alias opt_let_others_see = script_option[0] -- can players other than (active_player) see the full board state?
 alias opt_debugging      = script_option[1]
+alias active_player_traits = script_traits[0]
+alias spectator_traits     = script_traits[1]
 
 alias board_center = global.object[0]
 alias first_cell   = global.object[1]
@@ -18,29 +113,40 @@ alias temp_int_01  = global.number[2]
 
 alias active_player = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
 
+alias announced_game_start = player.number[0]
+alias announce_start_timer = player.timer[0]
+declare player.announce_start_timer = 5
+
+alias set_player_weapons = player.number[1]
+
 -- Fields for cells:
 alias cell_above = object.object[0]
 alias cell_left  = object.object[1]
 alias cell_right = object.object[2]
 alias cell_below = object.object[3] -- no more room for object.object vars!
-alias coord_x    = object.number[4]
-alias coord_y    = object.number[5]
+alias adjacent_mines_count = object.number[1]
+alias has_mine             = object.number[3]
+alias coord_x              = object.number[4]
+alias coord_y              = object.number[5]
+alias has_flag             = object.number[6]
 --
 -- Fields for Block 1x1 Flats:
 alias cell_marker  = object.object[0]
 alias decor_number = object.object[1] -- linked list of hill markers
+alias coil         = object.object[2]
 alias number_drawn = object.number[0] -- bool
+alias coil_invulnerability_timer = object.timer[0]
+declare object.coil_invulnerability_timer = 1
 --
 -- General:
-alias next_object = object.object[1]
+alias next_object       = object.object[1]
+alias is_script_created = object.number[2]
 --
-alias adjacent_mines_count = object.number[1]
-alias is_script_created    = object.number[2]
-alias has_mine             = object.number[3]
-alias cell_flags           = object.number[0]
-alias cell_flag_pending_reveal = 1 -- 0x0001
-alias cell_flag_revealed       = 2 -- 0x0002
-alias cell_flag_is_marked      = 4 -- 0x0004 -- has the active_player placed a flag on this cell?
+alias cell_flags = object.number[0]
+alias cell_flag_pending_reveal       = 1 -- 0x0001
+alias cell_flag_revealed             = 2 -- 0x0002
+alias cell_flag_is_marked            = 4 -- 0x0004 -- has the active_player placed a flag on this cell?
+alias cell_flag_initial_coil_spawned = 8 -- 0x0008
 
 alias game_state_flags                  = global.number[1]
 alias game_state_flag_board_constructed = 1 -- 0x0001
@@ -53,11 +159,17 @@ alias ui_current_player = script_widget[0]
 on init: do
    for each player do
       current_player.set_round_card_title("Reveal all cells in the grid while avoiding \nmines!")
+      current_player.announce_start_timer.set_rate(-100%)
    end
 end
 for each player do -- set loadout palettes
    ui_current_player.set_text("It's %s's turn!", active_player)
    ui_current_player.set_visibility(current_player, true)
+   if current_player.announce_start_timer.is_zero() and current_player.announced_game_start != 1 then
+      current_player.announced_game_start = 1
+      current_player.announce_start_timer.set_rate(0%)
+      send_incident(action_sack_game_start, current_player, no_player)
+   end
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
    else
@@ -290,6 +402,7 @@ do  -- construct board
       _construct_and_link_board_row() -- row 9
       for each object with label "minesweep_cell" do
          alias block = temp_obj_00
+         alias coil  = temp_obj_01
          --
          block = current_object.place_at_me(block_1x1_flat, "minesweep_cell_extra", never_garbage_collect, 0, 0, 0, none)
          block.attach_to(current_object, 0, 0, 0, absolute)
@@ -305,14 +418,120 @@ do  -- construct board
       randomize_mines()
    end
 end
-if active_player == no_player then
+for each object with label "minesweep_cell_extra" do
+   alias block = current_object
+   alias cell  = temp_obj_00
+   alias coil  = temp_obj_01
+   alias test  = temp_int_00
    --
-   -- TODO: Code to prevent a player from playing two rounds in a row if other players 
-   -- are present in the match. We can use stats to persist cross-round state for this 
-   -- purpose.
+   cell  = block.cell_marker
+   test  = cell.cell_flags
+   test &= cell_flag_revealed
+   if block.coil == no_object and test == 0 then
+      function _spawn_coil()
+         coil = cell.place_at_me(fusion_coil, none, never_garbage_collect, 0, 0, 0, none)
+         coil.copy_rotation_from(board_center, true)
+         coil.set_scale(400) -- this MUST be done BEFORE attaching
+         coil.attach_to(block, 0, 0, -17, relative)
+         coil.is_script_created = 1
+         block.coil = coil
+      end
+      --
+      test  = cell.cell_flags
+      test &= cell_flag_initial_coil_spawned
+      if test == 0 then
+         _spawn_coil()
+         cell.cell_flags |= cell_flag_initial_coil_spawned
+      end
+      if test != 0 then
+         --
+         -- If we already spawned the initial coil, then this must be the destruction of a 
+         -- Fusion Coil. Let's assume that the active player is responsible.
+         --
+         game.show_message_to(active_player, none, "Selected space %nx%n", cell.coord_x, cell.coord_y)
+         --
+         -- Check what action to take based on whether
+         --
+         temp_obj_02 = active_player.get_weapon(primary)
+         if temp_obj_02.is_of_type(dmr) then -- toggle a flag
+            cell.has_flag *= -1 -- flip the bool
+            cell.has_flag +=  1 -- flip the bool
+         end
+         if temp_obj_02.is_of_type(magnum) then -- uncover the square
+            if cell.has_flag == 0 then
+               cell.cell_flags |= cell_flag_revealed
+               if cell.has_mine == 1 then
+                  --
+                  -- TODO: failure outcome
+                  --
+                  game.show_message_to(all_players, none, "Stepped on a mine!")
+               end
+               if cell.has_mine == 0 then
+                  --
+                  -- TODO: reveal space, and recursively reveal any adjacent spaces without mines 
+                  -- (recursive reveal operation must set "reveal" flag on the cell AND delete its 
+                  -- fusion coil)
+                  --
+               end
+            end
+            if cell.has_flag == 1 then
+               game.show_message_to(active_player, none, "To select space %nx%n, remove the flag.", cell.coord_x, cell.coord_y)
+            end
+         end
+         test  = cell.cell_flags
+         test &= cell_flag_revealed
+         if test == 0 then
+            --
+            -- Respawn the coil, to allow for further selections
+            --
+            _spawn_coil()
+            block.coil_invulnerability_timer.reset()
+            block.coil_invulnerability_timer.set_rate(-100%)
+            coil.set_invincibility(1)
+         end
+      end
+   end
+   if block.coil_invulnerability_timer.is_zero() then
+      block.coil_invulnerability_timer.set_rate(0%)
+      block.coil_invulnerability_timer.reset()
+      --
+      block.coil.set_invincibility(0)
+   end
+end
+do
+   if active_player == no_player then
+      for each player randomly do
+         active_player = current_player
+      end
+      --
+      -- TODO: Code to prevent a player from playing two rounds in a row if other players 
+      -- are present in the match. We can use stats to persist cross-round state for this 
+      -- purpose.
+      --
+   end
+   active_player.apply_traits(active_player_traits)
+   if active_player.set_player_weapons == 0 and active_player.biped != no_object then
+      active_player.set_player_weapons = 1
+      active_player.biped.remove_weapon(secondary, false)
+      active_player.biped.remove_weapon(primary,   false)
+      active_player.biped.add_weapon(dmr,    force)
+      active_player.biped.add_weapon(magnum, force)
+   end
+   if active_player.killer_type_is(guardians | suicide | kill | betrayal | quit) then
+      active_player.set_player_weapons = 0
+   end
    --
-   for each player randomly do
-      active_player = current_player
+   for each player do
+      if current_player != active_player then
+         current_player.apply_traits(spectator_traits)
+         --
+         -- TODO: FFA: All spectators should be forced into unarmed Monitor bipeds.
+         --
+         -- TODO: TEAM: All spectators not allied with the active player should be 
+         -- forced into unarmed Monitor bipeds; spectators allied with the active 
+         -- player should be stripped of their weapons.
+         --
+      end
    end
 end
 
