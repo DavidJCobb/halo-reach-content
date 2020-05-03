@@ -110,6 +110,7 @@ alias temp_obj_03  = global.object[5]
 alias temp_obj_04  = global.object[6]
 alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[2]
+alias temp_int_02  = global.number[3]
 
 alias active_player = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
 
@@ -132,7 +133,7 @@ alias has_flag             = object.number[6]
 --
 -- Fields for Block 1x1 Flats:
 alias cell_marker  = object.object[0]
-alias decor_number = object.object[1] -- linked list of hill markers
+alias cell_dice    = object.object[1] -- for 7 and 8, check block.cell_dice.next_object
 alias coil         = object.object[2]
 alias number_drawn = object.number[0] -- bool
 alias coil_invulnerability_timer = object.timer[0]
@@ -290,53 +291,36 @@ end
 --
 function recalc_adjacent_mines()
    for each object with label "minesweep_cell" do
-      alias basis      = current_object
-      alias working    = temp_obj_00
-      alias working_ex = temp_obj_01
+      alias basis   = current_object
+      alias working = temp_obj_00
       --
       basis.adjacent_mines_count = 0
       --
-      working    = basis.cell_above
-      working_ex = working.cell_left
-      if working.has_mine == 1 then
-         basis.adjacent_mines_count += 1
+      function _add_if()
+         if working.has_mine == 1 then
+            basis.adjacent_mines_count += 1
+         end
       end
-      if working_ex.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
-      working_ex = working.cell_right
-      if working_ex.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
-      --
-      -- Mid row:
-      --
-      working    = basis.cell_left
-      working_ex = basis.cell_right
-      if working.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
-      if working_ex.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
-      --
-      -- Bottom row:
-      --
-      working    = basis.cell_below
-      working_ex = working.cell_left
-      if working.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
-      if working_ex.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
-      working_ex = working.cell_right
-      if working_ex.has_mine == 1 then
-         basis.adjacent_mines_count += 1
-      end
+      working = basis.cell_left
+      _add_if()
+      working = working.cell_above -- upper-left
+      _add_if()
+      working = basis.cell_right
+      _add_if()
+      working = working.cell_below -- lower-right
+      _add_if()
+      working = basis.cell_above
+      _add_if()
+      working = working.cell_right -- upper-right
+      _add_if()
+      working = basis.cell_below
+      _add_if()
+      working = working.cell_left -- lower-left
+      _add_if()
    end
 end
 function randomize_mines()
+   alias placed_mine_count = temp_int_01 -- caller must init this to 0
    alias attempts = temp_int_00 -- nested function needs us to init this to 0
    alias result   = temp_obj_00 -- nested function needs us to init this to no_object
    function _find_random_clear_space()
@@ -351,7 +335,6 @@ function randomize_mines()
          end
       end
    end
-   alias placed_mine_count = temp_int_01 -- caller must init this to 0
    --
    attempts = 0         -- set up state for next call
    result   = no_object -- set up state for next call
@@ -402,7 +385,6 @@ do  -- construct board
       _construct_and_link_board_row() -- row 9
       for each object with label "minesweep_cell" do
          alias block = temp_obj_00
-         alias coil  = temp_obj_01
          --
          block = current_object.place_at_me(block_1x1_flat, "minesweep_cell_extra", never_garbage_collect, 0, 0, 0, none)
          block.attach_to(current_object, 0, 0, 0, absolute)
@@ -427,7 +409,81 @@ for each object with label "minesweep_cell_extra" do
    cell  = block.cell_marker
    test  = cell.cell_flags
    test &= cell_flag_revealed
+   if test != 0 and block.cell_dice == no_object then
+      --
+      -- The space is flagged as revealed, but we have not yet actually revealed it. Let's 
+      -- get that taken care of.
+      --
+      alias working = temp_obj_02
+      if cell.has_mine == 1 then
+         --
+         -- The space is mined. Draw the landmine.
+         --
+         working = cell.place_at_me(landmine, none, never_garbage_collect, 0, 0, 0, none)
+         working.set_scale(134)
+         working.copy_rotation_from(board_center, true)
+         working.is_script_created = 1
+         block.cell_dice = working
+         --
+         working.attach_to(block)
+         working.set_invincibility(1)
+      elseif cell.adjacent_mines_count > 0 then
+         alias working_adjacent = temp_int_01
+         --
+         working = cell.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
+         working.set_scale(134)
+         --working.attach_to(block, 0, 0, -3, relative) -- have to set rotation while detached?
+         working.copy_rotation_from(board_center, true)
+         working.is_script_created = 1
+         block.cell_dice = working
+         --
+         working_adjacent = cell.adjacent_mines_count
+         if working_adjacent > 6 then
+            working_adjacent = 6
+         end
+         for each object with label "minesweep_dice" do
+            if current_object.spawn_sequence == working_adjacent then
+               working.copy_rotation_from(current_object, true)
+            end
+         end
+         --
+         -- The dice's origin, or pivot point, isn't actually its centerpoint; it's the center 
+         -- of the "six" face. This means that different numbers will require different attach 
+         -- positions. An unscaled block is 0.75 Forge units on a side (verified by extracting 
+         -- the model and examining it in an editor); scaling a block to 134% would make it 
+         -- ever so slightly larger than a Block 1x1, while scaling to 107% would make it 0.8 
+         -- Forge units on a side.
+         --
+         -- Moreover, we must attach the dice after setting its rotation. If we try to modify 
+         -- its rotation while it is attached, the rotation will not be changed.
+         --
+         if working_adjacent == 1 then
+            working.attach_to(block, 0, 0, -9, relative)
+         end
+         if working_adjacent == 2 then
+            working.attach_to(block, 5, 0, -4, relative)
+         end
+         if working_adjacent == 3 then
+            working.attach_to(block, 5, 0, -4, relative)
+         end
+         if working_adjacent == 4 then
+            working.attach_to(block, 5, 0, -4, relative)
+         end
+         if working_adjacent == 5 then
+            working.attach_to(block, -5, 0, -4, relative)
+         end
+         if working_adjacent == 6 then
+            working.attach_to(block, 0, 0, 1, relative)
+         end
+      end
+      --
+      block.coil.delete() -- revealed cells are non-interactable
+   end
    if block.coil == no_object and test == 0 then
+      --
+      -- The space is not revealed, and its fusion coil was destroyed. That means that the 
+      -- active player has chosen to interact with it in some way.
+      --
       function _spawn_coil()
          coil = cell.place_at_me(fusion_coil, none, never_garbage_collect, 0, 0, 0, none)
          coil.copy_rotation_from(board_center, true)
@@ -449,6 +505,7 @@ for each object with label "minesweep_cell_extra" do
          -- Fusion Coil. Let's assume that the active player is responsible.
          --
          game.show_message_to(active_player, none, "Selected space %nx%n", cell.coord_x, cell.coord_y)
+         game.show_message_to(active_player, none, "debug: space has %n adjacent mines...", cell.adjacent_mines_count)
          --
          -- Check what action to take based on whether
          --
@@ -469,8 +526,7 @@ for each object with label "minesweep_cell_extra" do
                if cell.has_mine == 0 then
                   --
                   -- TODO: reveal space, and recursively reveal any adjacent spaces without mines 
-                  -- (recursive reveal operation must set "reveal" flag on the cell AND delete its 
-                  -- fusion coil)
+                  -- (recursive reveal operation must set "reveal" flag on the cell)
                   --
                end
             end
@@ -535,135 +591,6 @@ do
    end
 end
 
-for each object with label "minesweep_cell_extra" do -- create box shapes to serve as number labels
-   alias cell     = temp_obj_00
-   alias adjacent = temp_int_00
-   --
-   cell = current_object.cell_marker
-   if cell.has_mine != 0 then -- don't draw numbers for cells with mines
-      current_object.number_drawn = 1
-   end
-   adjacent = cell.adjacent_mines_count
-   if current_object.number_drawn == 0 then
-      alias current_decor  = temp_obj_01
-      alias previous_decor = temp_obj_02
-      alias marker_inset   = -4
-      previous_decor = no_object
-      current_decor  = no_object
-      function _make_number_shape()
-         current_decor  = current_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-         previous_decor.next_object = current_decor
-         previous_decor = current_decor
-      end
-      --
-      current_object.number_drawn = 1
-      if adjacent == 1 then
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
-         current_decor.attach_to(current_object, marker_inset, 0, 0, absolute)
-         current_object.decor_number = current_decor
-      end
-      if adjacent == 2 then
-         --
-         -- AAAAAAAAA
-         --         D
-         --         D
-         -- BBBBBBBBB
-         -- E
-         -- E
-         -- CCCCCCCCC
-         --
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, 4, absolute)
-         current_object.decor_number = current_decor
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 1, 5)
-         current_decor.attach_to(current_object, marker_inset, 4, -4, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 1, 5)
-         current_decor.attach_to(current_object, marker_inset, -4, 4, relative)
-      end
-      if adjacent == 3 then
-         --
-         -- BBBBBBBBA
-         --         A
-         --         A
-         --   CCCCCCA
-         --         A
-         --         A
-         -- DDDDDDDDA
-         --
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
-         current_decor.attach_to(current_object, marker_inset, 4, 0, absolute)
-         current_object.decor_number = current_decor
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, 4, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 7, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 2, 0, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
-      end
-      if adjacent == 4 then
-         --
-         -- C       A
-         -- C       A
-         -- C       A
-         -- BBBBBBBBA
-         --         A
-         --         A
-         --         A
-         --
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
-         current_decor.attach_to(current_object, marker_inset, 4, 0, absolute)
-         current_object.decor_number = current_decor
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 1, 4)
-         current_decor.attach_to(current_object, marker_inset, -4, 2, relative)
-      end
-      if adjacent == 5 then
-         --
-         -- AAAAAAAAA
-         -- D        
-         -- D        
-         -- BBBBBBBBB
-         --         E
-         --         E
-         -- CCCCCCCCC
-         --
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, 4, absolute)
-         current_object.decor_number = current_decor
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 9, 1, 1)
-         current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 1, 5)
-         current_decor.attach_to(current_object, marker_inset, -4, -4, relative)
-         _make_number_shape()
-         current_decor.set_shape(box, 5, 1, 1, 5)
-         current_decor.attach_to(current_object, marker_inset, 4, 4, relative)
-      end
-   end
-end
 for each object with label "minesweep_cell_extra" do -- manage number label visibility
    alias revealed = temp_int_00
    alias cell     = temp_obj_00
@@ -682,19 +609,4 @@ for each object with label "minesweep_cell_extra" do -- manage number label visi
       cell.set_waypoint_icon(bomb)
       cell.set_waypoint_visibility(everyone)
    end
-   --
-   alias graphic = temp_obj_00
-   graphic = no_object
-   graphic = current_object.decor_number
-   function _traverse()
-      graphic.set_shape_visibility(everyone)
-      if revealed == 0 then
-         graphic.set_shape_visibility(mod_player, active_player, 0)
-      end
-      graphic = graphic.next_object
-      if graphic != no_object then
-         _traverse()
-      end
-   end
-   _traverse()
 end
