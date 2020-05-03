@@ -23,6 +23,8 @@ alias cell_above = object.object[0]
 alias cell_left  = object.object[1]
 alias cell_right = object.object[2]
 alias cell_below = object.object[3] -- no more room for object.object vars!
+alias coord_x    = object.number[4]
+alias coord_y    = object.number[5]
 --
 -- Fields for Block 1x1 Flats:
 alias cell_marker  = object.object[0]
@@ -74,6 +76,25 @@ for each object with label "minesweep_cell_extra" do -- delete Forge-placed obje
    end
 end
 
+--
+-- If we build the board relative to the BOARD_CENTER, which should be turned on its side to 
+-- facilitate a vertical board, then we want to use relative axes.
+--
+-- Local X = Board Vertical   (positive = down?)
+-- Local Y = Board Horizontal
+-- Local Z = Board Depth      (positive = closer)
+--
+alias board_axis_x_offset = -10 -- world X = board-local Y
+alias board_axis_y_offset =  10 -- world Y = board-local X
+alias new_row_x_offset = 10
+alias new_row_y_offset =  0
+alias new_row_z_offset =  0
+alias new_col_x_offset =  0
+alias new_col_y_offset = 10
+alias new_col_z_offset =  0
+alias first_cell_x_offset = -45
+alias first_cell_y_offset = -45
+alias first_cell_z_offset =   0
 function construct_board_row()
    alias base = temp_obj_00 -- caller must set this to the already-constructed first cell of this row
    alias next = temp_obj_01
@@ -81,18 +102,28 @@ function construct_board_row()
       -- caller must set (base) to the previously-constructed cell in this row
       --
       next = base.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, cell_length, 0, 0, none) -- A
+      next.attach_to(base, new_col_x_offset, new_col_y_offset, new_col_z_offset, relative)
+      next.detach()
       next.copy_rotation_from(board_center, true)
       next.is_script_created = 1
       next.set_shape(box, 8, 8, 10, 10)
       next.cell_left  = base
       base.cell_right = next
+      next.coord_x = base.coord_x
+      next.coord_y = base.coord_y
+      next.coord_x += 1
       --
       base = next.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, cell_length, 0, 0, none) -- B
+      base.attach_to(next, new_col_x_offset, new_col_y_offset, new_col_z_offset, relative)
+      base.detach()
       base.copy_rotation_from(board_center, true)
       base.is_script_created = 1
       base.set_shape(box, 8, 8, 10, 10)
       base.cell_left  = next
       next.cell_right = base
+      base.coord_x = next.coord_x
+      base.coord_y = next.coord_y
+      base.coord_x += 1
       --
       -- Because (base) was set to the last-created cell, you can call this function consecutively 
       -- so long as you plan on having an odd number of cells in each row.
@@ -128,10 +159,14 @@ function _construct_and_link_board_row()
    alias row_a_start = temp_obj_02 -- caller must set this to the first cell of the previously-created row
    alias row_b_start = temp_obj_03
    --
-   row_b_start = row_a_start.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, 0, 0, cell_length_neg, none)
+   row_b_start = row_a_start.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, 0, 0, 0, none)
+   row_b_start.attach_to(row_a_start, new_row_x_offset, new_row_y_offset, new_row_z_offset, relative)
+   row_b_start.detach()
    row_b_start.copy_rotation_from(board_center, true)
    row_b_start.is_script_created = 1
    row_b_start.set_shape(box, 8, 8, 10, 10)
+   row_b_start.coord_y = row_a_start.coord_y
+   row_b_start.coord_y += 1
    temp_obj_00 = row_b_start
    construct_board_row()
    temp_obj_00 = row_a_start
@@ -236,7 +271,7 @@ do  -- construct board
       alias row_a_start = temp_obj_02
       alias row_b_start = temp_obj_03
       first_cell = board_center.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, 0, 0, 0, none)
-      first_cell.attach_to(board_center, -45, -45, 0, relative) -- ensure accurate position
+      first_cell.attach_to(board_center, first_cell_x_offset, first_cell_y_offset, first_cell_z_offset, relative)
       first_cell.detach()
       first_cell.copy_rotation_from(board_center, true)
       first_cell.is_script_created = 1
@@ -282,141 +317,131 @@ if active_player == no_player then
 end
 
 for each object with label "minesweep_cell_extra" do -- create box shapes to serve as number labels
-   alias cell = temp_obj_00
+   alias cell     = temp_obj_00
+   alias adjacent = temp_int_00
    --
    cell = current_object.cell_marker
    if cell.has_mine != 0 then -- don't draw numbers for cells with mines
       current_object.number_drawn = 1
    end
+   adjacent = cell.adjacent_mines_count
    if current_object.number_drawn == 0 then
-      alias revealed = temp_int_00
+      alias current_decor  = temp_obj_01
+      alias previous_decor = temp_obj_02
+      alias marker_inset   = -4
+      previous_decor = no_object
+      current_decor  = no_object
+      function _make_number_shape()
+         current_decor  = current_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+         previous_decor.next_object = current_decor
+         previous_decor = current_decor
+      end
       --
-      cell      = current_object.cell_marker
-      revealed  = cell.cell_flags
-      revealed &= cell_flag_revealed
-      if opt_debugging == 1 then
-         revealed = 1
+      current_object.number_drawn = 1
+      if adjacent == 1 then
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
+         current_decor.attach_to(current_object, marker_inset, 0, 0, absolute)
+         current_object.decor_number = current_decor
       end
-      if current_object.has_mine == 1 then
-         revealed = 0
-      end
-      if revealed != 0 then
-         alias current_decor  = temp_obj_01
-         alias previous_decor = temp_obj_02
-         alias marker_inset   = -4
-         function _make_number_shape()
-            current_decor  = current_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-            previous_decor.next_object = current_decor
-            previous_decor = current_decor
-         end
-         previous_decor = no_object
+      if adjacent == 2 then
          --
-         current_object.number_drawn = 1
-         if cell.adjacent_mines_count == 1 then
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
-            current_decor.attach_to(current_object, marker_inset, 0, 0, absolute)
-            current_object.decor_number = current_decor
-         end
-         if cell.adjacent_mines_count == 2 then
-            --
-            -- AAAAAAAAA
-            --         D
-            --         D
-            -- BBBBBBBBB
-            -- E
-            -- E
-            -- CCCCCCCCC
-            --
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, 4, absolute)
-            current_object.decor_number = current_decor
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 1, 5)
-            current_decor.attach_to(current_object, marker_inset, 4, -4, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 1, 5)
-            current_decor.attach_to(current_object, marker_inset, -4, 4, relative)
-         end
-         if cell.adjacent_mines_count == 3 then
-            --
-            -- BBBBBBBBA
-            --         A
-            --         A
-            --   CCCCCCA
-            --         A
-            --         A
-            -- DDDDDDDDA
-            --
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
-            current_decor.attach_to(current_object, marker_inset, 4, 0, absolute)
-            current_object.decor_number = current_decor
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, 4, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 7, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 2, 0, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
-         end
-         if cell.adjacent_mines_count == 4 then
-            --
-            -- C       A
-            -- C       A
-            -- C       A
-            -- BBBBBBBBA
-            --         A
-            --         A
-            --         A
-            --
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
-            current_decor.attach_to(current_object, marker_inset, 4, 0, absolute)
-            current_object.decor_number = current_decor
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 1, 4)
-            current_decor.attach_to(current_object, marker_inset, -4, 2, relative)
-         end
-         if cell.adjacent_mines_count == 5 then
-            --
-            -- AAAAAAAAA
-            -- D        
-            -- D        
-            -- BBBBBBBBB
-            --         E
-            --         E
-            -- CCCCCCCCC
-            --
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, 4, absolute)
-            current_object.decor_number = current_decor
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 9, 1, 1)
-            current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 1, 5)
-            current_decor.attach_to(current_object, marker_inset, -4, -4, relative)
-            _make_number_shape()
-            current_decor.set_shape(box, 5, 1, 1, 5)
-            current_decor.attach_to(current_object, marker_inset, 4, 4, relative)
-         end
+         -- AAAAAAAAA
+         --         D
+         --         D
+         -- BBBBBBBBB
+         -- E
+         -- E
+         -- CCCCCCCCC
+         --
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, 4, absolute)
+         current_object.decor_number = current_decor
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 1, 5)
+         current_decor.attach_to(current_object, marker_inset, 4, -4, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 1, 5)
+         current_decor.attach_to(current_object, marker_inset, -4, 4, relative)
+      end
+      if adjacent == 3 then
+         --
+         -- BBBBBBBBA
+         --         A
+         --         A
+         --   CCCCCCA
+         --         A
+         --         A
+         -- DDDDDDDDA
+         --
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
+         current_decor.attach_to(current_object, marker_inset, 4, 0, absolute)
+         current_object.decor_number = current_decor
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, 4, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 7, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 2, 0, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
+      end
+      if adjacent == 4 then
+         --
+         -- C       A
+         -- C       A
+         -- C       A
+         -- BBBBBBBBA
+         --         A
+         --         A
+         --         A
+         --
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 9, 9) -- width, length, top, bottom
+         current_decor.attach_to(current_object, marker_inset, 4, 0, absolute)
+         current_object.decor_number = current_decor
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 1, 4)
+         current_decor.attach_to(current_object, marker_inset, -4, 2, relative)
+      end
+      if adjacent == 5 then
+         --
+         -- AAAAAAAAA
+         -- D        
+         -- D        
+         -- BBBBBBBBB
+         --         E
+         --         E
+         -- CCCCCCCCC
+         --
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, 4, absolute)
+         current_object.decor_number = current_decor
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, 0, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 9, 1, 1)
+         current_decor.attach_to(current_object, marker_inset, 0, -4, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 1, 5)
+         current_decor.attach_to(current_object, marker_inset, -4, -4, relative)
+         _make_number_shape()
+         current_decor.set_shape(box, 5, 1, 1, 5)
+         current_decor.attach_to(current_object, marker_inset, 4, 4, relative)
       end
    end
 end
@@ -438,7 +463,10 @@ for each object with label "minesweep_cell_extra" do -- manage number label visi
       cell.set_waypoint_icon(bomb)
       cell.set_waypoint_visibility(everyone)
    end
+   --
    alias graphic = temp_obj_00
+   graphic = no_object
+   graphic = current_object.decor_number
    function _traverse()
       graphic.set_shape_visibility(everyone)
       if revealed == 0 then
@@ -449,6 +477,5 @@ for each object with label "minesweep_cell_extra" do -- manage number label visi
          _traverse()
       end
    end
-   graphic = current_object.decor_number
    _traverse()
 end
