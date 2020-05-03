@@ -102,7 +102,6 @@ alias temp_obj_01  = global.object[3]
 alias temp_obj_02  = global.object[4]
 alias temp_obj_03  = global.object[5]
 alias temp_obj_04  = global.object[6]
-alias oni_floor    = global.object[7]
 alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[2]
 --
@@ -313,6 +312,12 @@ function randomize_mines()
       recalc_adjacent_mines()
    end
 end
+function _make_grid()
+   temp_obj_00 = board_center.place_at_me(grid, none, never_garbage_collect, 0, 0, 0, none)
+   temp_obj_00.set_scale(50)
+   temp_obj_00.attach_to(board_center, 0, 0, 0, absolute)
+   temp_obj_00.detach()
+end
 do  -- construct board
    temp_int_00 = game_state_flags
    temp_int_00 &= game_state_flag_board_constructed
@@ -363,31 +368,20 @@ do  -- construct board
       --
       -- Finally, let's give ourselves a floor.
       --
-      temp_obj_00 = board_center.place_at_me(grid, none, never_garbage_collect, 0, 0, 0, none)
-      temp_obj_00.set_scale(50)
-      temp_obj_00.attach_to(board_center, 0, 0, 0, absolute)
-      temp_obj_00.detach()
-      board_center.set_shape(box, 90, 90, 1, 0)
+      _make_grid()
+      _make_grid()
+      _make_grid()
+      _make_grid()
+      _make_grid()
+      _make_grid()
+      temp_int_01  = board_size
+      temp_int_01 *= 100
+      temp_int_01 /= 30
+      temp_obj_00.set_scale(temp_int_01)
+      _make_grid()
+      temp_obj_00.set_scale(temp_int_01)
+      board_center.set_shape(box, 90, 90, 2, 0)
       board_center.set_shape_visibility(everyone)
-      --
-      -- Feature: ONI Floor
-      --
-      oni_floor = no_object
-      for each object with label "minesweep_onifloor" do
-         if current_object.spawn_sequence == board_center.spawn_sequence then
-            if oni_floor == no_object then
-               temp_obj_01 = current_object.place_at_me(grid, none, never_garbage_collect, 0, 0, 0, none)
-               temp_obj_01.set_scale(1)
-               temp_obj_01.attach_to(current_object, 0, 0, -100, absolute)
-               temp_obj_01.detach()
-               oni_floor = temp_obj_01.place_at_me(oni_van, none, never_garbage_collect, 0, 0, 0, none)
-               oni_floor.set_invincibility(1)
-               oni_floor.set_scale(1500)
-               oni_floor.attach_to(temp_obj_01, 60, 0, -90, absolute)
-            end
-         end
-         current_object.delete()
-      end
    end
 end
 if active_player == no_player then
@@ -400,31 +394,7 @@ if active_player == no_player then
       active_player = current_player
    end
 end
-for each player do
-   temp_obj_00 = current_player.get_vehicle()
-   if temp_obj_00 == oni_floor then
-      current_player.biped.detach() -- force out of vehicle
-      --
-      -- ...and move them back to the board.
-      --
-      current_player.biped.attach_to(board_center, 0, 0, 5, absolute)
-      current_player.biped.detach()
-   end
-end
 
-function _make_number_dot()
-   alias current_decor  = temp_obj_01
-   alias previous_decor = temp_obj_02
-   alias rotate_marker  = temp_obj_02 -- variable reuse is intentional
-   --
-   current_decor = current_object.place_at_me(block_1x1_flat, none, none, 0, 0, 0, none)
-   current_decor.set_scale(10)
-   previous_decor.next_object = current_decor
-   --
-   current_decor.face_toward(current_decor, 2, 2, 0)
-   --
-   previous_decor = current_decor
-end
 for each object with label "minesweep_cell_extra" do
    if current_object.number_drawn == 0 then
       alias revealed = temp_int_00
@@ -440,7 +410,17 @@ for each object with label "minesweep_cell_extra" do
          revealed = 0
       end
       if revealed != 0 then
-         alias current_decor = temp_obj_01
+         alias current_decor  = temp_obj_01
+         alias previous_decor = temp_obj_02
+         function _make_number_dot()
+            current_decor = current_object.place_at_me(block_1x1_flat, none, none, 0, 0, 0, none)
+            current_decor.set_scale(10)
+            previous_decor.next_object = current_decor
+            current_decor.face_toward(current_decor, 2, 2, 0)
+            --
+            previous_decor = current_decor
+         end
+         previous_decor = no_object
          --
          current_object.number_drawn = 1
          if cell.adjacent_mines_count == 1 then
@@ -457,10 +437,12 @@ for each object with label "minesweep_cell_extra" do
          end
          if cell.adjacent_mines_count == 3 then
             _make_number_dot()
-            current_decor.attach_to(current_object, -1, 2, 1, relative)
+            current_decor.attach_to(current_object, -1, -2, 1, relative)
             current_object.decor_number = current_decor
             _make_number_dot()
             current_decor.attach_to(current_object, 1, -2, 1, relative)
+            _make_number_dot()
+            current_decor.attach_to(current_object, 0, 2, 1, relative)
          end
          if cell.adjacent_mines_count == 4 then
             _make_number_dot()
