@@ -69,6 +69,13 @@
 --          if each cell has its own Grid that's just small enough, then the 
 --          parts we DON'T light up serve as gridlines between cells).
 --
+--          Alternatively: we could have a single grid (or multiple grids that 
+--          we stitch together) cover the whole board, and draw some kind of 
+--          divider on top of them if we can find a non-solid one. If attaching 
+--          objects doesn't consistently disable their collision, then that 
+--          would be the best approach (lest we have eleventy billion overlapping 
+--          grid collision objects).
+--
 --  - Any "physical" display will cost us the ability to let spectators see the 
 --    full board state, unless we allow them to teleport to some other location 
 --    and reproduce the board state there.
@@ -100,10 +107,20 @@ alias temp_int_01  = global.number[2]
 --
 alias active_player = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
 --
+-- Fields for cells:
 alias cell_above = object.object[0]
 alias cell_left  = object.object[1]
 alias cell_right = object.object[2]
 alias cell_below = object.object[3] -- no more room for object.object vars!
+--
+-- Fields for Block 1x1 Flats:
+alias cell_marker  = object.object[0]
+alias decor_base   = object.object[1]
+alias decor_number = object.object[2]
+alias number_drawn = object.number[0] -- bool
+--
+-- General:
+alias next_object = object.object[1]
 --
 alias adjacent_mines_count = object.number[1]
 alias is_script_created    = object.number[2]
@@ -137,6 +154,11 @@ for each player do -- set loadout palettes
 end
 
 for each object with label "minesweep_cell" do -- delete Forge-placed objects with this label
+   if current_object.is_script_created == 0 then
+      current_object.delete()
+   end
+end
+for each object with label "minesweep_cell_extra" do -- delete Forge-placed objects with this label
    if current_object.is_script_created == 0 then
       current_object.delete()
    end
@@ -321,16 +343,36 @@ do  -- construct board
       _construct_and_link_board_row() -- row 8
       _construct_and_link_board_row() -- row 9
       for each object with label "minesweep_cell" do
-         temp_obj_00 = current_object.place_at_me(block_1x1_flat, none, never_garbage_collect, 0, 0, 0, none)
-         temp_obj_00.attach_to(current_object, 0, 0, 0, absolute)
-         temp_obj_00.detach()
-         temp_obj_00.is_script_created = 1
+         alias block = temp_obj_00
+         --
+         block = current_object.place_at_me(block_1x1_flat, "minesweep_cell_extra", never_garbage_collect, 0, 0, 0, none)
+         block.attach_to(current_object, 0, 0, 0, absolute)
+         block.detach()
+         block.is_script_created = 1
+         block.cell_marker = current_object
+         --
+         --alias die_1 = temp_obj_01
+         --alias die_2 = temp_obj_02
+         --die_1 = block.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
+         --die_1.set_scale(95)
+         --die_1.attach_to(block, 0, 0, -6, absolute)
+         --block.decor_base = die_1
+         --die_2 = block.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
+         --die_2.set_scale(25)
+         --die_2.attach_to(block, 0, 0, -1, absolute)
+         --die_1.next_object = die_2
       end
       --
       -- We've constructed the board, so now, we need to randomly place mines.
       --
       temp_int_01 = 0 -- set up state for next call
       randomize_mines()
+      --
+      do -- TEMP TEST
+         temp_obj_00 = board_center.place_at_me(oni_van, none, none, 0, 0, 3, none)
+         temp_obj_00.set_shape_visibility(everyone)
+         temp_obj_00.set_shape(box, 15, 20, 20, 40)
+      end
    end
 end
 if active_player == no_player then
@@ -341,6 +383,84 @@ if active_player == no_player then
    --
    for each player randomly do
       active_player = current_player
+   end
+end
+
+function _make_number_dot()
+   alias current_decor  = temp_obj_01
+   alias previous_decor = temp_obj_02
+   alias rotate_marker  = temp_obj_02 -- variable reuse is intentional
+   --
+   current_decor = current_object.place_at_me(block_1x1_flat, none, none, 0, 0, 0, none)
+   current_decor.set_scale(10)
+   previous_decor.next_object = current_decor
+   --
+   current_decor.face_toward(current_decor, 2, 2, 0)
+   --
+   previous_decor = current_decor
+end
+for each object with label "minesweep_cell_extra" do
+   if current_object.number_drawn == 0 then
+      alias revealed = temp_int_00
+      alias cell     = temp_obj_00
+      --
+      cell      = current_object.cell_marker
+      revealed  = cell.cell_flags
+      revealed &= cell_flag_revealed
+      if opt_debugging == 1 then
+         revealed = 1
+      end
+      if current_object.has_mine == 1 then
+         revealed = 0
+      end
+      if revealed != 0 then
+         alias current_decor = temp_obj_01
+         --
+         current_object.number_drawn = 1
+         if cell.adjacent_mines_count == 1 then
+            _make_number_dot()
+            current_decor.attach_to(current_object, 0, 0, 1, relative)
+            current_object.decor_number = current_decor
+         end
+         if cell.adjacent_mines_count == 2 then
+            _make_number_dot()
+            current_decor.attach_to(current_object, -2, 0, 1, relative)
+            current_object.decor_number = current_decor
+            _make_number_dot()
+            current_decor.attach_to(current_object, 2, 0, 1, relative)
+         end
+         if cell.adjacent_mines_count == 3 then
+            _make_number_dot()
+            current_decor.attach_to(current_object, -1, 2, 1, relative)
+            current_object.decor_number = current_decor
+            _make_number_dot()
+            current_decor.attach_to(current_object, 1, -2, 1, relative)
+         end
+         if cell.adjacent_mines_count == 4 then
+            _make_number_dot()
+            current_decor.attach_to(current_object, -2, -2, 1, relative)
+            current_object.decor_number = current_decor
+            _make_number_dot()
+            current_decor.attach_to(current_object, 2, -2, 1, relative)
+            _make_number_dot()
+            current_decor.attach_to(current_object, -2, 2, 1, relative)
+            _make_number_dot()
+            current_decor.attach_to(current_object, 2, 2, 1, relative)
+         end
+         if cell.adjacent_mines_count == 5 then
+            _make_number_dot()
+            current_decor.attach_to(current_object, -2, -2, 1, relative)
+            current_object.decor_number = current_decor
+            _make_number_dot()
+            current_decor.attach_to(current_object, 2, -2, 1, relative)
+            _make_number_dot()
+            current_decor.attach_to(current_object, -2, 2, 1, relative)
+            _make_number_dot()
+            current_decor.attach_to(current_object, 2, 2, 1, relative)
+            _make_number_dot()
+            current_decor.attach_to(current_object, 0, 0, 1, relative)
+         end
+      end
    end
 end
 
@@ -392,6 +512,11 @@ end
 
 --
 -- TODO:
+--
+--  - Idea: a custom game option which controls whether numbers are rendered as numbers 
+--    or as dots. Bonus points if, if we go with dark objects on a grid, we can use 
+--    45-degree-rotated scaled-down Block 1x1 Flats as the dots, for a futuristic and 
+--    sorta 343i-style-Forerunner look.
 --
 --  - Spawn a flag and a bomb, and let the player select a space with either
 --
