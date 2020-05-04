@@ -17,6 +17,8 @@
 --  - Verify that numbers 5 and 6 display properly. Add code to display 
 --    numbers 7 and 8.
 --
+--  - Handle the active player quitting.
+--
 --  - Add divergent behavior for Team versus FFA.
 --
 --     - Team: Players on the team take turns, each uncovering one cell.
@@ -118,6 +120,7 @@ for each player do -- set loadout palettes
       current_player.announced_game_start = 1
       current_player.announce_start_timer.set_rate(0%)
       send_incident(action_sack_game_start, current_player, no_player)
+      game.show_message_to(current_player, none, "Minesweeper v1.0.0 by Cobb!")
    end
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
@@ -248,7 +251,7 @@ function recalc_adjacent_mines()
       --
       basis.adjacent_mines_count = 0
       --
-      function _add_if()
+      function _add_if() -- if we inlined this, each copy would be a separate trigger. since they're all identical, let's just make it a function so we're not compiling tons of duplicate data
          if working.has_mine == 1 then
             basis.adjacent_mines_count += 1
          end
@@ -348,6 +351,34 @@ do -- construct board
       --
       -- We've constructed the board, so now, we need to randomly place mines.
       --
+      if opt_debugging == 2 then
+         -- XXXXXXX.
+         -- X8X6.X5.
+         -- XXXX.XX.
+         for each object with label "minesweep_cell" do
+            if current_object.coord_y < 3 then
+               if  current_object.coord_y == 0
+               and current_object.coord_x <= 7
+               then
+                  current_object.has_mine = 1
+               end
+               if  current_object.coord_y == 1 then
+                  if current_object.coord_x == 0
+                  or current_object.coord_x == 2
+                  or current_object.coord_x == 5
+                  or current_object.coord_x == 7
+                  then
+                     current_object.has_mine = 1
+                  end
+               end
+               if current_object.coord_y == 2 then
+                  if current_object.coord_x != 4 and current_object.coord_x <= 6 then
+                     current_object.has_mine = 1
+                  end
+               end
+            end
+         end
+      end
       temp_int_01 = 0 -- set up state for next call
       randomize_mines()
    end
@@ -365,17 +396,23 @@ do -- ensure that an active player exists and is appropriately armed
    end
    active_player.apply_traits(active_player_traits)
    ui_how_to_play.set_visibility(active_player, false)
-   if active_player.set_player_weapons == 0 and active_player.biped != no_object then
-      active_player.set_player_weapons = 1
-      active_player.biped.remove_weapon(secondary, false)
-      active_player.biped.remove_weapon(primary,   false)
-      active_player.biped.add_weapon(dmr,    force)
-      active_player.biped.add_weapon(magnum, force)
-      --
+   if active_player.biped != no_object then
       ui_how_to_play.set_visibility(active_player, true)
+      if active_player.set_player_weapons == 0 then
+         active_player.set_player_weapons = 1
+         active_player.biped.remove_weapon(secondary, false)
+         active_player.biped.remove_weapon(primary,   false)
+         active_player.biped.add_weapon(dmr,    force)
+         active_player.biped.add_weapon(magnum, force)
+      end
    end
    if active_player.killer_type_is(guardians | suicide | kill | betrayal | quit) then
       active_player.set_player_weapons = 0
+      if active_player.killer_type_is(quit) then
+         --
+         -- TODO: Handle the active player quitting.
+         --
+      end
    end
    --
    for each player do
@@ -412,7 +449,7 @@ for each object with label "minesweep_cell_extra" do
    if cell.has_flag == 0 and block.cell_flag != no_object then
       block.cell_flag.delete()
    end
-   if cell.reveal_state == cell_reveal_state_yes and block.cell_dice == no_object then
+   if cell.reveal_state == cell_reveal_state_yes and block.cell_dice == no_object then -- handle revealed cell graphics
       --
       -- The space is flagged as revealed, but we have not yet actually revealed it. Let's 
       -- get that taken care of.
@@ -432,6 +469,13 @@ for each object with label "minesweep_cell_extra" do
          working.set_invincibility(1)
       elseif cell.adjacent_mines_count > 0 then
          alias working_adjacent = temp_int_01
+         function _rotate()
+            for each object with label "minesweep_dice" do
+               if current_object.spawn_sequence == working_adjacent then
+                  working.copy_rotation_from(current_object, true)
+               end
+            end
+         end
          --
          working = cell.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
          working.set_scale(134)
@@ -443,11 +487,7 @@ for each object with label "minesweep_cell_extra" do
          if working_adjacent > 6 then
             working_adjacent = 6
          end
-         for each object with label "minesweep_dice" do
-            if current_object.spawn_sequence == working_adjacent then
-               working.copy_rotation_from(current_object, true)
-            end
-         end
+         _rotate()
          --
          -- The dice's origin, or pivot point, isn't actually its centerpoint; it's the center 
          -- of the "six" face. This means that different numbers will require different attach 
@@ -472,15 +512,35 @@ for each object with label "minesweep_cell_extra" do
             working.attach_to(block, 5, 0, -4, relative)
          end
          if working_adjacent == 5 then
-            working.attach_to(block, -5, 0, -4, relative)
+            working.attach_to(block, 5, 0, -4, relative)
          end
          if working_adjacent == 6 then
             working.attach_to(block, 0, 0, 1, relative)
+            --
+            -- If the number of adjacent mines is 7 or 8, then we need to spawn an additional 
+            -- die, scale it down, face it to 1 or 2, and merge it into the larger 6-die.
+            --
+            if cell.adjacent_mines_count > 6 then
+               working = cell.place_at_me(dice, none, never_garbage_collect, 0, 0, 0, none)
+               working.set_scale(54)
+               working.copy_rotation_from(board_center, true)
+               working.is_script_created = 1
+               working.next_object = working
+               --
+               working_adjacent  = cell.adjacent_mines_count
+               working_adjacent -= 6
+               _rotate()
+               --
+               coil = block.cell_dice
+               coil.next_object = working
+               if working_adjacent == 1 then -- showing 1
+                  working.attach_to(block, 0, 0, -3, relative)
+               end
+               if working_adjacent == 2 then -- showing 2
+                  working.attach_to(block, 2, 0, -1, relative)
+               end
+            end
          end
-         --
-         -- TODO: If the number of adjacent mines is 7 or 8, then we need to spawn an additional 
-         -- die, scale it down, face it to 1 or 2, and merge it into the larger 6-die.
-         --
       end
       --
       block.coil.delete() -- revealed cells are non-interactable
@@ -569,6 +629,19 @@ function do_recursive_reveal()
    for each object with label "minesweep_cell" do
       if current_object.reveal_state == cell_reveal_state_recursing then
          current_object.reveal_state = cell_reveal_state_yes
+         --
+         -- The naive approach would be to grab all of the cell's immediate neighbors and 
+         -- flag them as recursing, and then exit -- letting the rest of the loop grab 
+         -- them, if we haven't already looped over them, or letting a subsequent call to 
+         -- this function grab them. However, in the worst case that would require this 
+         -- function to recurse to an incredibly high depth -- close to 80, with a worst-
+         -- case arrangement of mines.
+         --
+         -- We can do better. We'll use small recursive sub-functions to flag cells in 
+         -- any cardinal direction of the current cell as recursing (stopping when we hit 
+         -- a cell with adjacent mines or a cell that is itself mined), and we'll also 
+         -- flag the current cell's adjacent diagonals. The more cells we can flag at 
+         -- once, the less times we need the for-each-object-with-label loop to run.
          --
          working = current_object.cell_left
          function _process_left()
@@ -799,7 +872,7 @@ do -- handle player failure
    end
 end
 
-if opt_debugging == 1 then -- debug: reveal mines
+if opt_debugging >= 1 then -- debug: reveal mines
    for each object with label "minesweep_cell" do
       if current_object.has_mine == 1 then
          current_object.set_waypoint_icon(bomb)
