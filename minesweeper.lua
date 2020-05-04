@@ -14,10 +14,7 @@
 --
 -- TODO:
 --
---  - Verify that numbers 5 and 6 display properly. Add code to display 
---    numbers 7 and 8.
---
---  - Handle the active player quitting.
+--  - Test the quit behavior.
 --
 --  - Add divergent behavior for Team versus FFA.
 --
@@ -32,11 +29,10 @@ alias desired_mine_count = 10
 alias cell_length        = 10 -- a Block 1x1 Flat is 1.0 Forge units on a side
 alias cell_length_neg    = -10
 
-alias opt_debugging      = script_option[0]
-alias opt_points_win     = script_option[1]
-alias opt_points_loss    = script_option[2]
-alias opt_points_flag    = script_option[3]
-alias opt_points_space   = script_option[4]
+alias opt_points_win     = script_option[0]
+alias opt_points_loss    = script_option[1]
+alias opt_points_flag    = script_option[2]
+alias opt_points_space   = script_option[3]
 alias active_player_traits = script_traits[0]
 alias spectator_traits     = script_traits[1]
 
@@ -83,6 +79,7 @@ declare object.coil_invulnerability_timer = 1
 -- General:
 alias next_object       = object.object[1]
 alias is_script_created = object.number[2]
+alias do_not_delete     = object.number[3] -- used for ending cutscene
 --
 alias cell_flags = object.number[0]
 alias cell_flag_initial_coil_spawned = 1 -- 0x0001
@@ -93,9 +90,12 @@ alias cell_reveal_state_recursing = 2
 
 alias game_state_flags                  = global.number[1]
 alias game_state_flag_board_constructed = 1 -- 0x0001
-alias game_state_flag_player_failed     = 2 -- 0x0002 -- player hit a landmine
-alias game_state_flag_landmine_shower   = 4 -- 0x0004
-alias game_state_flag_player_killed     = 8 -- 0x0008
+alias game_ending                 = global.number[4]
+alias game_ending_no              = 0
+alias game_ending_queued          = 1
+alias game_ending_cutscene_active = 2
+alias game_ending_done            = 3
+alias game_ending_quit            = 4
 alias game_failure_cinematic_timer   = global.timer[0] -- kill active player and end round after this time passes
 alias game_failure_timer             = global.timer[1] -- kill active player and end round after this time passes
 declare game_failure_cinematic_timer = 4
@@ -106,6 +106,9 @@ declare object.adjacent_mines_count with network priority low
 
 alias ui_current_player = script_widget[0]
 alias ui_how_to_play    = script_widget[1]
+
+alias stat_uncovered = player.script_stat[0]
+alias stat_plays     = player.script_stat[1]
 
 on init: do
    for each player do
@@ -351,48 +354,25 @@ do -- construct board
       --
       -- We've constructed the board, so now, we need to randomly place mines.
       --
-      if opt_debugging == 2 then
-         -- XXXXXXX.
-         -- X8X6.X5.
-         -- XXXX.XX.
-         for each object with label "minesweep_cell" do
-            if current_object.coord_y < 3 then
-               if  current_object.coord_y == 0
-               and current_object.coord_x <= 7
-               then
-                  current_object.has_mine = 1
-               end
-               if  current_object.coord_y == 1 then
-                  if current_object.coord_x == 0
-                  or current_object.coord_x == 2
-                  or current_object.coord_x == 5
-                  or current_object.coord_x == 7
-                  then
-                     current_object.has_mine = 1
-                  end
-               end
-               if current_object.coord_y == 2 then
-                  if current_object.coord_x != 4 and current_object.coord_x <= 6 then
-                     current_object.has_mine = 1
-                  end
-               end
-            end
-         end
-      end
       temp_int_01 = 0 -- set up state for next call
       randomize_mines()
    end
 end
-do -- ensure that an active player exists and is appropriately armed
+do -- manage active player
    if active_player == no_player then
-      for each player randomly do
-         active_player = current_player
+      alias least_plays = temp_int_00
+      least_plays = 32767
+      for each player do
+         if current_player.stat_plays < least_plays then
+            least_plays = current_player.stat_plays
+         end
       end
-      --
-      -- TODO: Code to prevent a player from playing two rounds in a row if other players 
-      -- are present in the match. We can use stats to persist cross-round state for this 
-      -- purpose.
-      --
+      for each player randomly do
+         if current_player.stat_plays == least_plays then
+            active_player = current_player
+         end
+      end
+      active_player.stat_plays += 1
    end
    active_player.apply_traits(active_player_traits)
    ui_how_to_play.set_visibility(active_player, false)
@@ -400,36 +380,43 @@ do -- ensure that an active player exists and is appropriately armed
       ui_how_to_play.set_visibility(active_player, true)
       if active_player.set_player_weapons == 0 then
          active_player.set_player_weapons = 1
-         active_player.biped.remove_weapon(secondary, false)
-         active_player.biped.remove_weapon(primary,   false)
+         active_player.biped.remove_weapon(secondary, true)
+         active_player.biped.remove_weapon(primary,   true)
          active_player.biped.add_weapon(dmr,    force)
          active_player.biped.add_weapon(magnum, force)
       end
    end
    if active_player.killer_type_is(guardians | suicide | kill | betrayal | quit) then
       active_player.set_player_weapons = 0
-      if active_player.killer_type_is(quit) then
-         --
-         -- TODO: Handle the active player quitting.
-         --
+      if active_player.killer_type_is(quit) and game_ending == game_ending_no then
+         game_ending = game_ending_quit
+         game.show_message_to(all_players, none, "The active player quit. Ending round.")
       end
    end
    --
    for each player do
       if current_player != active_player then
          current_player.apply_traits(spectator_traits)
-         --
-         -- TODO: FFA: All spectators should be forced into unarmed Monitor bipeds.
-         --
-         -- TODO: TEAM: All spectators not allied with the active player should be 
-         -- forced into unarmed Monitor bipeds; spectators allied with the active 
-         -- player should be stripped of their weapons.
-         --
+         if not current_player.biped.is_of_type(monitor) then
+            --
+            -- FFA: All spectators should be forced into unarmed Monitor bipeds.
+            --
+            -- TEAM: Spectators not allied with the active player should be forced into 
+            -- unarmed Monitor bipeds. Spectators allied with the active player should 
+            -- be stripped of their weapons (TODO).
+            --
+            if game.teams_enabled == 0 or current_player.team != active_player.team then
+               temp_obj_00 = current_player.biped
+               temp_obj_01 = temp_obj_00.place_at_me(monitor, none, none, 0, 0, 0, none)
+               current_player.set_biped(temp_obj_01)
+               temp_obj_00.delete()
+            end
+         end
       end
    end
 end
 
-for each object with label "minesweep_cell_extra" do
+for each object with label "minesweep_cell_extra" do -- board graphics and interaction
    alias block = current_object
    alias cell  = temp_obj_00
    alias coil  = temp_obj_01
@@ -465,7 +452,7 @@ for each object with label "minesweep_cell_extra" do
          working.is_script_created = 1
          block.cell_dice = working
          --
-         working.attach_to(block, 0, 0, 1, absolute)
+         working.attach_to(block, 1, 0, 1, absolute)
          working.set_invincibility(1)
       elseif cell.adjacent_mines_count > 0 then
          alias working_adjacent = temp_int_01
@@ -590,7 +577,7 @@ for each object with label "minesweep_cell_extra" do
                cell.reveal_state = cell_reveal_state_yes
                if cell.has_mine == 1 then
                   game.show_message_to(all_players, announce_assault_armed, "Stepped on a mine!")
-                  game_state_flags |= game_state_flag_player_failed
+                  game_ending = game_ending_queued
                end
                if cell.has_mine == 0 then
                   if cell.adjacent_mines_count == 0 then
@@ -742,7 +729,7 @@ function do_recursive_reveal()
       end
    end
 end
-do
+do -- call recursive reveal function; check for and handle round victory
    do_recursive_reveal()
    if temp_int_00 == 0 then -- previous function ran successfully?
       --
@@ -750,9 +737,7 @@ do
       -- but first, we need to check whether we've already registered a failure. 
       -- Why? We reveal the whole board when the player fails.
       --
-      temp_int_00  = game_state_flags
-      temp_int_00 &= game_state_flag_player_failed
-      if temp_int_00 == 0 then
+      if game_ending == game_ending_no then
          --
          -- Check for victory.
          --
@@ -772,6 +757,7 @@ do
             end
          end
          if remaining == 0 then
+            active_player.stat_uncovered += consumed
             mines    *= opt_points_flag
             consumed *= opt_points_space
             active_player.score += opt_points_win
@@ -789,10 +775,20 @@ do
    end
 end
 
-do -- handle player failure
-   temp_int_00  = game_state_flags
-   temp_int_00 &= game_state_flag_player_failed
-   if temp_int_00 != 0 then
+do -- handle round endings other than successes
+   if  game_ending == game_ending_no
+   and game.round_time_limit > 0
+   and game.round_timer.is_zero()
+   then
+      for each object with label "minesweep_cell" do
+         if current_object.has_mine == 0 and current_object.reveal_state == cell_reveal_state_yes then
+            active_player.stat_uncovered += 1
+            active_player.score += opt_points_space
+         end
+      end
+      game.end_round()
+   end
+   if game_ending != game_ending_no then -- handle player failure
       --
       -- Award the player points as appropriate for a round failure.
       --
@@ -800,8 +796,11 @@ do -- handle player failure
       alias correct_flags = temp_int_00
       correct_flags = 0
       for each object with label "minesweep_cell" do
-         if current_object.has_mine == 0 and current_object.has_flag == 1 then
+         if current_object.has_mine == 1 and current_object.has_flag == 1 then
             correct_flags += 1
+         end
+         if current_object.has_mine == 0 and current_object.reveal_state == cell_reveal_state_yes then
+            active_player.stat_uncovered += 1
          end
       end
       correct_flags *= opt_points_flag
@@ -812,71 +811,67 @@ do -- handle player failure
       for each object with label "minesweep_cell" do
          current_object.reveal_state = cell_reveal_state_yes
       end
-      --
-      -- Spawn a shower of landmines overtop the active player, and give them time to 
-      -- enjoy it before killing them.
-      --
-      temp_int_00  = game_state_flags
-      temp_int_00 &= game_state_flag_landmine_shower
-      if temp_int_00 == 0 then
-         game_state_flags |= game_state_flag_landmine_shower
-         --
-         alias counter = temp_int_01
-         function _make()
-            temp_obj_00 = active_player.biped
-            temp_obj_01 = temp_obj_00.place_at_me(landmine, none, none, 0, 0, 20, none)
-            temp_obj_01.set_invincibility(1)
-            temp_obj_01.push_upward()
-            temp_obj_01.push_upward()
-            temp_obj_01.push_upward()
-            temp_obj_01.push_upward()
-            counter -= 1
-            if counter > 0 then
-               _make()
-            end
-         end
-         counter = 25
-         _make()
-         --
-         game_failure_timer.reset()
-         game_failure_timer.set_rate(-100%)
-         game_failure_cinematic_timer.reset()
-         game_failure_cinematic_timer.set_rate(-100%)
-      end
-      if game_failure_cinematic_timer.is_zero() then
-         game_failure_cinematic_timer.set_rate(0%)
-         for each object do
-            if current_object.is_of_type(landmine) then
-               current_object.set_invincibility(0)
-               current_object.detach()
-               current_object.set_scale(200) -- big boom
-               --
-               current_object.kill(false)
-            end
-         end
-         temp_int_00  = game_state_flags
-         temp_int_00 &= game_state_flag_player_killed
-         if temp_int_00 == 0 then
-            active_player.biped.kill(false)
-         else
-            temp_int_00 = active_player.biped.health
-            if temp_int_00 > 0 then
-               active_player.biped.delete() -- ensure we only delete newly-spawned bipeds
-            end
-         end
-         game_state_flags |= game_state_flag_player_killed
-      end
-      if game_failure_timer.is_zero() then
+      if game_ending == game_ending_quit then
          game.end_round()
       end
-   end
-end
-
-if opt_debugging >= 1 then -- debug: reveal mines
-   for each object with label "minesweep_cell" do
-      if current_object.has_mine == 1 then
-         current_object.set_waypoint_icon(bomb)
-         current_object.set_waypoint_visibility(everyone)
+      if game_ending != game_ending_quit then
+         --
+         -- Spawn a shower of landmines overtop the active player, and give them time to 
+         -- enjoy it before killing them.
+         --
+         if game_ending < game_ending_cutscene_active then
+            game_ending = game_ending_cutscene_active
+            --
+            alias counter = temp_int_01
+            function _make()
+               temp_obj_00 = active_player.biped
+               temp_obj_01 = temp_obj_00.place_at_me(landmine, none, none, 0, 0, 20, none)
+               temp_obj_01.set_invincibility(1)
+               temp_obj_01.push_upward()
+               temp_obj_01.push_upward()
+               temp_obj_01.push_upward()
+               temp_obj_01.push_upward()
+               counter -= 1
+               if counter > 0 then
+                  _make()
+               end
+            end
+            counter = 25
+            _make()
+            --
+            game_failure_timer.reset()
+            game_failure_timer.set_rate(-100%)
+            game_failure_cinematic_timer.reset()
+            game_failure_cinematic_timer.set_rate(-100%)
+         end
+         if game_failure_cinematic_timer.is_zero() then
+            game_failure_cinematic_timer.set_rate(0%)
+            --
+            for each object do
+               if current_object.is_of_type(landmine) then
+                  current_object.set_invincibility(0)
+                  current_object.detach()
+                  current_object.set_scale(200) -- big boom
+                  --
+                  current_object.kill(false)
+               end
+            end
+            temp_obj_00 = active_player.biped
+            if game_ending == game_ending_done then
+               temp_obj_00.kill(true)
+               if temp_obj_00.do_not_delete != 1 then
+                  temp_obj_00.delete()
+               end
+            end
+            if game_ending < game_ending_done then
+               temp_obj_00.do_not_delete = 1
+               temp_obj_00.kill(false)
+               game_ending = game_ending_done
+            end
+         end
+         if game_failure_timer.is_zero() then
+            game.end_round()
+         end
       end
    end
 end
