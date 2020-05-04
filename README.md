@@ -13,9 +13,24 @@
 
 Spawns a board with one scaled-up Fusion Coil per board cell. Shoot a coil to interact with the cell. The action taken depends on your weapon; Magnums uncover spaces while DMRs toggle flags. Minesweeper rules are fully implemented with the exception of guaranteeing that the first selected space is not a mine. All mines are randomly placed. Scoring options allow players to configure rewards or penalties for winning, losing, for each correctly-placed flag, and for each uncovered board cell.
 
-Setup requires the placement of seven objects in Forge. The first should be a Hill Marker with the Forge label BOARD_CENTER. The other six should be Dice with the Forge label MINESWEEP_DICE and Spawn Sequences 1 through 6. Each dice should be rotated such that its respective number would face the player were the dice to be teleported onto the board. (The dice are needed because Megalo cannot easily rotate objects, but it can copy one object's rotation onto another.) Forgers should be careful not to design maps in such a way that the board's Fusion Coils can be destroyed by any means other than the active player firing a bullet; Megalo does not make it possible to identify who or what killed a Fusion Coil, so the gametype assumes that any Fusion Coil's destruction is a deliberate action taken by the active player.
+Setup requires the placement of seven objects in Forge. The first should be a Hill Marker with the Forge label `BOARD_CENTER`. The other six should be Dice with the Forge label `MINESWEEP_DICE` and Spawn Sequences 1 through 6. Each dice needs to be rotated as described below. (The dice are needed because Megalo cannot easily rotate objects, but it can copy one object's rotation onto another.)
 
-Technical considerations include:
+The 3D model for a Hill Marker resembles a Respawn Point that has been scaled down, with an inward-pointing arrow overtop of it. Respawn Points and Hill Markers both have a "forward" direction indicated by the pointed tip of their base, while a Hill Marker's larger arrow indicates the "down" direction. For a vertical board, your `BOARD_CENTER` Hill Marker should have its "forward" direction pointing down, and its "up" direction pointing toward the player. (The board's rotation doesn't technically matter &mdash; an upside-down board won't break the game &mdash; but board cells are numbered starting from the top-left, and cell numbers are displayed in the kill feed if the player tries to uncover a cell that they have flagged.)
+
+The six dice need to be rotated such that specific numbers face out toward specific board-relative(!) directions as listed in the table below. A PNG file is included in this repo, showing the rotations needed for a vertical board.
+
+| Spawn sequence | Upward face | Backward face |
+| - | - | - |
+| 1 | 1 | 5 |
+| 2 | 2 | 1 |
+| 3 | 3 | 1 |
+| 4 | 4 | 1 |
+| 5 | 5 | 1 |
+| 6 | 6 | 3 |
+
+Forgers should be careful not to design maps in such a way that the board's Fusion Coils can be destroyed by any means other than the active player firing a bullet; Megalo does not make it possible to identify who or what killed a Fusion Coil, so the gametype assumes that any Fusion Coil's destruction is a deliberate action taken by the active player.
+
+Technical considerations for the gametype script include:
 
 * There is no way to detect who is responsible for a Fusion Coil's destruction. Fusion Coils do not fire the "on object death" even when destroyed; we can only check for the cessation of a coil's existence.
 
