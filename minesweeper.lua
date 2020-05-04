@@ -79,7 +79,6 @@ declare object.coil_invulnerability_timer = 1
 -- General:
 alias next_object       = object.object[1]
 alias is_script_created = object.number[2]
-alias do_not_delete     = object.number[3] -- used for ending cutscene
 --
 alias cell_flags = object.number[0]
 alias cell_flag_initial_coil_spawned = 1 -- 0x0001
@@ -99,7 +98,7 @@ alias game_ending_quit            = 4
 alias game_failure_cinematic_timer   = global.timer[0] -- kill active player and end round after this time passes
 alias game_failure_timer             = global.timer[1] -- kill active player and end round after this time passes
 declare game_failure_cinematic_timer = 4
-declare game_failure_timer           = 8
+declare game_failure_timer           = 7
 
 declare active_player with network priority high
 declare object.adjacent_mines_count with network priority low
@@ -163,8 +162,8 @@ alias new_row_z_offset =  0
 alias new_col_x_offset =  0
 alias new_col_y_offset = 10
 alias new_col_z_offset =  0
-alias first_cell_x_offset = -45
-alias first_cell_y_offset = -45
+alias first_cell_x_offset = -40
+alias first_cell_y_offset = -40
 alias first_cell_z_offset =   0
 function construct_board_row()
    alias base = temp_obj_00 -- caller must set this to the already-constructed first cell of this row
@@ -428,7 +427,7 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
       --
       working = cell.place_at_me(flag, none, never_garbage_collect, 0, 0, 0, none)
       working.set_scale(80)
-      working.attach_to(block, 2, 0, 5, absolute)
+      working.attach_to(block, 2, 0, 3, relative)
       working.is_script_created = 1
       working.team = team[0] -- not sure if this'll work in FFA but I want flags to be red
       block.cell_flag = working
@@ -452,7 +451,7 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
          working.is_script_created = 1
          block.cell_dice = working
          --
-         working.attach_to(block, 1, 0, 1, absolute)
+         working.attach_to(block, 0, 0, 1, relative)
          working.set_invincibility(1)
       elseif cell.adjacent_mines_count > 0 then
          alias working_adjacent = temp_int_01
@@ -858,13 +857,24 @@ do -- handle round endings other than successes
             end
             temp_obj_00 = active_player.biped
             if game_ending == game_ending_done then
-               temp_obj_00.kill(true)
-               if temp_obj_00.do_not_delete != 1 then
-                  temp_obj_00.delete()
-               end
+               --temp_obj_01 = temp_obj_00.place_at_me(monitor, none, none, 0, 0, 0, none)
+               --active_player.set_biped(temp_obj_01)
+               --temp_obj_01.kill(false)
+               --temp_obj_00.delete()
+               --
+               -- The above allows us to avoid a hard cut to black while also deleting the active 
+               -- player's newly-spawned bodies. However, it leads to the active player having 
+               -- their vision flash black once per spawn attempt (once per second in practice), 
+               -- and I don't particularly feel like giving photosensitive gamers a seizure. I'll 
+               -- just accept the hard cut to black.
+               --
+               temp_obj_00.delete()
+               --
+               -- Once the hard cut to black happens, no widgets can be displayed, and I'm pretty 
+               -- sure that sounds are likely to get muted as well.
+               --
             end
             if game_ending < game_ending_done then
-               temp_obj_00.do_not_delete = 1
                temp_obj_00.kill(false)
                game_ending = game_ending_done
             end
