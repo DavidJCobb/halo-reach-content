@@ -14,20 +14,24 @@
 --
 -- TODO:
 --
+--  - Consider prefixing the "private" labels with an underscore. Reach's Forge 
+--    UI doesn't currently sort labels alphabetically; as long as MCC PC doesn't 
+--    change this, an underscore is a good way to denote "privacy" in a way that 
+--    programmers, at least, would recognize on sight.
+--
 --  - Test the quit behavior.
 --
---  - Add divergent behavior for Team versus FFA.
+--  - Test the team behavior.
 --
---     - Team: Players on the team take turns, each uncovering one cell.
---
---     - FFA: (Current script behavior.) A single player works to solve the 
---       board.
+--  - Test the FFA behavior when multiple players are present.
 --
 
 alias board_size         = 9
 alias desired_mine_count = 10
 alias cell_length        = 10 -- a Block 1x1 Flat is 1.0 Forge units on a side
 alias cell_length_neg    = -10
+
+alias MAX_INT = 32767
 
 alias opt_points_win     = script_option[0]
 alias opt_points_loss    = script_option[1]
@@ -46,8 +50,22 @@ alias temp_obj_04  = global.object[6]
 alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[2]
 alias temp_int_02  = global.number[3]
+alias temp_int_03  = global.number[6] -- local
+declare temp_int_03 with network priority local
+alias temp_plr_00  = global.player[1]
+alias temp_plr_01  = global.player[2]
+alias temp_plr_02  = global.player[5] -- local
+declare temp_plr_02 with network priority local
 
-alias active_player = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
+alias active_player   = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
+alias active_team     = team[0]
+alias active_teammate = global.number[5]
+alias turn_order      = player.number[0]
+--
+alias ui_next_active_player_a = global.player[3]
+alias ui_next_active_player_b = global.player[4]
+declare ui_next_active_player_a with network priority local
+declare ui_next_active_player_b with network priority local
 
 alias announced_game_start = player.number[0]
 alias announce_start_timer = player.timer[0]
@@ -88,7 +106,9 @@ alias cell_reveal_state_yes       = 1
 alias cell_reveal_state_recursing = 2
 
 alias game_state_flags                  = global.number[1]
-alias game_state_flag_board_constructed = 1 -- 0x0001
+alias game_state_flag_board_constructed =  1 -- 0x0001
+alias game_state_flag_move_made         =  2 -- 0x0002
+alias game_state_flag_move_made_CLR     = -3 -- 0xFFFD -- clear flag
 alias game_ending                 = global.number[4]
 alias game_ending_no              = 0
 alias game_ending_queued          = 1
@@ -105,6 +125,7 @@ declare object.adjacent_mines_count with network priority low
 
 alias ui_current_player = script_widget[0]
 alias ui_how_to_play    = script_widget[1]
+alias ui_next_players   = script_widget[2]
 
 alias stat_uncovered = player.script_stat[0]
 alias stat_plays     = player.script_stat[1]
@@ -146,106 +167,6 @@ for each object with label "minesweep_cell_extra" do -- delete Forge-placed obje
    end
 end
 
---
--- If we build the board relative to the BOARD_CENTER, which should be turned on its side to 
--- facilitate a vertical board, then we want to use relative axes.
---
--- Local X = Board Vertical   (positive = down?)
--- Local Y = Board Horizontal
--- Local Z = Board Depth      (positive = closer)
---
-alias board_axis_x_offset = -10 -- world X = board-local Y
-alias board_axis_y_offset =  10 -- world Y = board-local X
-alias new_row_x_offset = 10
-alias new_row_y_offset =  0
-alias new_row_z_offset =  0
-alias new_col_x_offset =  0
-alias new_col_y_offset = 10
-alias new_col_z_offset =  0
-alias first_cell_x_offset = -40
-alias first_cell_y_offset = -40
-alias first_cell_z_offset =   0
-function construct_board_row()
-   alias base = temp_obj_00 -- caller must set this to the already-constructed first cell of this row
-   alias next = temp_obj_01
-   function _construct_board_row_segment()
-      -- caller must set (base) to the previously-constructed cell in this row
-      --
-      next = base.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, cell_length, 0, 0, none) -- A
-      next.attach_to(base, new_col_x_offset, new_col_y_offset, new_col_z_offset, relative)
-      next.detach()
-      next.copy_rotation_from(board_center, true)
-      next.is_script_created = 1
-      next.set_shape(box, 8, 8, 10, 10)
-      next.cell_left  = base
-      base.cell_right = next
-      next.coord_x = base.coord_x
-      next.coord_y = base.coord_y
-      next.coord_x += 1
-      --
-      base = next.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, cell_length, 0, 0, none) -- B
-      base.attach_to(next, new_col_x_offset, new_col_y_offset, new_col_z_offset, relative)
-      base.detach()
-      base.copy_rotation_from(board_center, true)
-      base.is_script_created = 1
-      base.set_shape(box, 8, 8, 10, 10)
-      base.cell_left  = next
-      next.cell_right = base
-      base.coord_x = next.coord_x
-      base.coord_y = next.coord_y
-      base.coord_x += 1
-      --
-      -- Because (base) was set to the last-created cell, you can call this function consecutively 
-      -- so long as you plan on having an odd number of cells in each row.
-      --
-   end
-   --
-   _construct_board_row_segment() -- 2 and 3
-   _construct_board_row_segment() -- 4 and 5
-   _construct_board_row_segment() -- 6 and 7
-   _construct_board_row_segment() -- 8 and 9
-end
-function link_rows()
-   alias row_1 = temp_obj_00 -- upper row
-   alias row_2 = temp_obj_01 -- lower row
-   function _link_row()
-      row_1.cell_below = row_2
-      row_2.cell_above = row_1
-      row_1 = row_1.cell_right
-      row_2 = row_2.cell_right
-   end
-   --
-   _link_row() -- 1
-   _link_row() -- 2
-   _link_row() -- 3
-   _link_row() -- 4
-   _link_row() -- 5
-   _link_row() -- 6
-   _link_row() -- 7
-   _link_row() -- 8
-   _link_row() -- 9
-end
-function _construct_and_link_board_row()
-   alias row_a_start = temp_obj_02 -- caller must set this to the first cell of the previously-created row
-   alias row_b_start = temp_obj_03
-   --
-   row_b_start = row_a_start.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, 0, 0, 0, none)
-   row_b_start.attach_to(row_a_start, new_row_x_offset, new_row_y_offset, new_row_z_offset, relative)
-   row_b_start.detach()
-   row_b_start.copy_rotation_from(board_center, true)
-   row_b_start.is_script_created = 1
-   row_b_start.set_shape(box, 8, 8, 10, 10)
-   row_b_start.coord_y = row_a_start.coord_y
-   row_b_start.coord_y += 1
-   temp_obj_00 = row_b_start
-   construct_board_row()
-   temp_obj_00 = row_a_start
-   temp_obj_01 = row_b_start
-   link_rows()
-   --
-   row_a_start = row_b_start -- prep for next call to _construct_and_link_board_row
-end
---
 function recalc_adjacent_mines()
    for each object with label "minesweep_cell" do
       alias basis   = current_object
@@ -308,6 +229,106 @@ function randomize_mines()
    end
 end
 do -- construct board
+   --
+   -- If we build the board relative to the BOARD_CENTER, which should be turned on its side to 
+   -- facilitate a vertical board, then we want to use relative axes.
+   --
+   -- Local X = Board Vertical   (positive = down?)
+   -- Local Y = Board Horizontal
+   -- Local Z = Board Depth      (positive = closer)
+   --
+   alias board_axis_x_offset = -10 -- world X = board-local Y
+   alias board_axis_y_offset =  10 -- world Y = board-local X
+   alias new_row_x_offset = 10
+   alias new_row_y_offset =  0
+   alias new_row_z_offset =  0
+   alias new_col_x_offset =  0
+   alias new_col_y_offset = 10
+   alias new_col_z_offset =  0
+   alias first_cell_x_offset = -40
+   alias first_cell_y_offset = -40
+   alias first_cell_z_offset =   0
+   function construct_board_row()
+      alias base = temp_obj_00 -- caller must set this to the already-constructed first cell of this row
+      alias next = temp_obj_01
+      function _construct_board_row_segment()
+         -- caller must set (base) to the previously-constructed cell in this row
+         --
+         next = base.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, cell_length, 0, 0, none) -- A
+         next.attach_to(base, new_col_x_offset, new_col_y_offset, new_col_z_offset, relative)
+         next.detach()
+         next.copy_rotation_from(board_center, true)
+         next.is_script_created = 1
+         next.set_shape(box, 8, 8, 10, 10)
+         next.cell_left  = base
+         base.cell_right = next
+         next.coord_x = base.coord_x
+         next.coord_y = base.coord_y
+         next.coord_x += 1
+         --
+         base = next.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, cell_length, 0, 0, none) -- B
+         base.attach_to(next, new_col_x_offset, new_col_y_offset, new_col_z_offset, relative)
+         base.detach()
+         base.copy_rotation_from(board_center, true)
+         base.is_script_created = 1
+         base.set_shape(box, 8, 8, 10, 10)
+         base.cell_left  = next
+         next.cell_right = base
+         base.coord_x = next.coord_x
+         base.coord_y = next.coord_y
+         base.coord_x += 1
+         --
+         -- Because (base) was set to the last-created cell, you can call this function consecutively 
+         -- so long as you plan on having an odd number of cells in each row.
+         --
+      end
+      --
+      _construct_board_row_segment() -- 2 and 3
+      _construct_board_row_segment() -- 4 and 5
+      _construct_board_row_segment() -- 6 and 7
+      _construct_board_row_segment() -- 8 and 9
+   end
+   function link_rows()
+      alias row_1 = temp_obj_00 -- upper row
+      alias row_2 = temp_obj_01 -- lower row
+      function _link_row()
+         row_1.cell_below = row_2
+         row_2.cell_above = row_1
+         row_1 = row_1.cell_right
+         row_2 = row_2.cell_right
+      end
+      --
+      _link_row() -- 1
+      _link_row() -- 2
+      _link_row() -- 3
+      _link_row() -- 4
+      _link_row() -- 5
+      _link_row() -- 6
+      _link_row() -- 7
+      _link_row() -- 8
+      _link_row() -- 9
+   end
+   function _construct_and_link_board_row()
+      alias row_a_start = temp_obj_02 -- caller must set this to the first cell of the previously-created row
+      alias row_b_start = temp_obj_03
+      --
+      row_b_start = row_a_start.place_at_me(hill_marker, "minesweep_cell", never_garbage_collect, 0, 0, 0, none)
+      row_b_start.attach_to(row_a_start, new_row_x_offset, new_row_y_offset, new_row_z_offset, relative)
+      row_b_start.detach()
+      row_b_start.copy_rotation_from(board_center, true)
+      row_b_start.is_script_created = 1
+      row_b_start.set_shape(box, 8, 8, 10, 10)
+      row_b_start.coord_y = row_a_start.coord_y
+      row_b_start.coord_y += 1
+      temp_obj_00 = row_b_start
+      construct_board_row()
+      temp_obj_00 = row_a_start
+      temp_obj_01 = row_b_start
+      link_rows()
+      --
+      row_a_start = row_b_start -- prep for next call to _construct_and_link_board_row
+   end
+   --
    temp_int_00 = game_state_flags
    temp_int_00 &= game_state_flag_board_constructed
    if temp_int_00 == 0 then
@@ -316,7 +337,7 @@ do -- construct board
       -- Let's start by picking a board center to use.
       --
       board_center = no_object
-      board_center = get_random_object("board_center", no_object)
+      board_center = get_random_object("minesweep_board", no_object)
       --
       -- Now, we need to construct the board.
       --
@@ -357,18 +378,100 @@ do -- construct board
       randomize_mines()
    end
 end
-do -- manage active player
-   if active_player == no_player then
-      alias least_plays = temp_int_00
-      least_plays = 32767
-      for each player do
-         if current_player.stat_plays < least_plays then
-            least_plays = current_player.stat_plays
+if game.teams_enabled == 1 then -- set team order
+   --
+   -- In team games, we give every player on the active team a "turn order" value, 
+   -- and use this to ensure that players take turns in a consistent order. Turn 
+   -- orders start at 1 and increase. The values do not need to be contiguous 
+   -- (which is intentional, so that we don't need to renumber everyone if someone 
+   -- in the middle of the list quits out).
+   --
+   alias turn_order = temp_int_00
+   alias missing    = temp_int_01
+   turn_order = 0 -- highest found turn order
+   for each player do
+      if current_player.team == active_team then
+         if current_player.turn_order > turn_order then
+            turn_order = current_player.turn_order
+         end
+         if current_player.turn_order == 0 then
+            missing += 1
          end
       end
-      for each player randomly do
-         if current_player.stat_plays == least_plays then
-            active_player = current_player
+   end
+   if missing > 0 then
+      for each player do
+         if current_player.team == active_team and current_player.turn_order == 0 then
+            turn_order += 1
+            current_player.turn_order = turn_order
+         end
+      end
+   end
+end
+do -- manage active player
+   if game_ending == 0 then
+      temp_int_00  = game_state_flags
+      temp_int_00 &= game_state_flag_move_made
+      if temp_int_00 != 0 then
+         game_state_flags &= game_state_flag_move_made_CLR -- clear flag
+         if game.teams_enabled == 1 then
+            active_player = 0
+         end
+      end
+   end
+   if active_player == no_player then
+      if game.teams_enabled == 1 then
+         alias turn_order = temp_int_00
+         alias target     = temp_plr_00 -- the player with the lowest player.turn_order that is greater than active_teammate
+         alias lowest     = temp_plr_01 -- the player with the lowest player.turn_order on the team
+         turn_order = MAX_INT
+         target     = no_player
+         lowest     = no_player
+         for each player do
+            if current_player.team == active_team then
+               if lowest == no_player or current_player.turn_order < lowest.turn_order then
+                  lowest = current_player
+               end
+               if  current_player.team == active_team
+               and current_player.turn_order > active_teammate
+               and current_player.turn_order < turn_order
+               then
+                  target     = current_player
+                  turn_order = current_player.turn_order
+               end
+            end
+         end
+         active_player = target
+         if active_player == no_player then
+            --
+            -- If (target == no_player), then that means that the previous active player had the 
+            -- highest turn order on the team, so wrap around to the player with the lowest turn 
+            -- order.
+            --
+            active_player = lowest
+         end
+         active_teammate = active_player.turn_order
+      end
+      if game.teams_enabled == 0 then
+         --
+         -- For FFA games, use a player stat to maintain state across rounds. The stat should 
+         -- count how many times the player has played the board; we'll prefer players with the 
+         -- lowest number of plays.
+         --
+         -- TODO: If someone joins in progress after missing a few rounds, they'll get multiple 
+         -- rounds in a row, which is not desired behavior.
+         --
+         alias least_plays = temp_int_00
+         least_plays = MAX_INT
+         for each player do
+            if current_player.stat_plays < least_plays then
+               least_plays = current_player.stat_plays
+            end
+         end
+         for each player randomly do
+            if current_player.stat_plays == least_plays then
+               active_player = current_player
+            end
          end
       end
       active_player.stat_plays += 1
@@ -387,7 +490,13 @@ do -- manage active player
    end
    if active_player.killer_type_is(guardians | suicide | kill | betrayal | quit) then
       active_player.set_player_weapons = 0
-      if active_player.killer_type_is(quit) and game_ending == game_ending_no then
+      --
+      -- For FFA, detect if the active player quits:
+      --
+      if  active_player.killer_type_is(quit)
+      and game.teams_enabled == 0
+      and game_ending == game_ending_no
+      then
          game_ending = game_ending_quit
          game.show_message_to(all_players, none, "The active player quit. Ending round.")
       end
@@ -410,6 +519,71 @@ do -- manage active player
                current_player.set_biped(temp_obj_01)
                temp_obj_00.delete()
             end
+            if game.teams_enabled == 1 and current_player.team == active_player.team then
+               current_player.biped.remove_weapon(secondary, true)
+               current_player.biped.remove_weapon(primary,   true)
+            end
+         end
+      end
+   end
+end
+on local: do -- manage UI for next active players
+   for each player do
+      ui_next_players.set_visibility(current_player, false)
+   end
+   if game.teams_enabled == 1 then
+      alias turn_order = temp_int_03
+      --
+      alias target = ui_next_active_player_a
+      alias lowest = temp_plr_02
+      target = no_player
+      lowest = no_player
+      turn_order = MAX_INT
+      ui_next_active_player_b = no_player
+      for each player do
+         if current_player.team == active_team then
+            if lowest == no_player or current_player.turn_order < lowest.turn_order then
+               if current_player != active_player then
+                  lowest = current_player
+               end
+            end
+            if  current_player.team == active_team
+            and current_player.turn_order > active_teammate
+            and current_player.turn_order < turn_order
+            then
+               target     = current_player
+               turn_order = current_player.turn_order
+            end
+         end
+      end
+      if target == no_player then
+         target = lowest
+      end
+      --
+      if target != no_player then
+         alias target = ui_next_active_player_b
+         target = no_player
+         turn_order = MAX_INT
+         for each player do
+            if current_player.team == active_team then
+               if  current_player.team == active_team
+               and current_player.turn_order > ui_next_active_player_a.turn_order
+               and current_player.turn_order < turn_order
+               then
+                  target     = current_player
+                  turn_order = current_player.turn_order
+               end
+            end
+         end
+      end
+      --
+      if ui_next_active_player_a != no_player then
+         for each player do
+            ui_next_players.set_visibility(current_player, true)
+         end
+         ui_next_players.set_text("UP NEXT:\n» %s", ui_next_active_player_a)
+         if ui_next_active_player_b != no_player then
+            ui_next_players.set_text("UP NEXT:\n» %s\n» %s", ui_next_active_player_a, ui_next_active_player_b)
          end
       end
    end
@@ -579,6 +753,7 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
                   game_ending = game_ending_queued
                end
                if cell.has_mine == 0 then
+                  game_state_flags |= game_state_flag_move_made
                   if cell.adjacent_mines_count == 0 then
                      cell.reveal_state = cell_reveal_state_recursing -- queue for recursive reveal
                   end
