@@ -9,6 +9,9 @@
 --
 --  - Landmine proximity behavior is now configurable.
 --
+--  - This script uses a more accurate system for checking whether a vehicle is 
+--    inside of a checkpoint or in proximity to a landmine.
+--
 
 --
 -- Notes:
@@ -38,6 +41,8 @@ alias distance_traveled_update_timer = global.timer[0]
 alias checkpoint_id    = object.number[0]
 alias mine_is_armed    = object.number[1] -- have we started the detonation timer?
 alias is_created_vehicle = object.number[2]
+alias next_node        = object.object[0]
+alias prev_node        = object.object[1]
 alias owner            = object.player[0] -- for vehicles
 alias abandoned_timer  = object.timer[0] -- used to delete vehicles that stop moving for too long
 alias detonation_timer = object.timer[1] -- for landmines
@@ -65,6 +70,8 @@ declare first_checkpoint with network priority low
 declare showed_spawn_failure_message with network priority low = 0
 declare global.object[1] with network priority local -- temporary
 declare global.object[2] with network priority local -- temporary
+declare global.object[3] with network priority local -- temporary
+declare global.object[4] with network priority local -- temporary
 declare queued_award_point_to    with network priority low
 declare last_player_to_take_lead with network priority low
 declare distance_traveled_update_timer = 1
@@ -95,14 +102,59 @@ alias cross_round_state = player.script_stat[0] -- bitmask, to track data across
 alias crs_defined      = 32768 -- 0x8000
 alias crs_civ_veh_mask = 7     -- 0x0007
 
-alias all_landmines = 3
+alias all_landmines = 3 -- Forge label
 
 alias vehicle_none = 7
+
+alias volume_node_checker = global.object[5]
+declare volume_node_checker with network priority low
+function volume_contains_vehicle()
+   --
+   -- A call to subject.shape_contains(target) only tests whether (target)'s 
+   -- centerpoint is inside of (subject)'s shape. This makes racetracks with 
+   -- small checkpoints unplayable for large vehicles. My original plan to 
+   -- remedy this was to spawn invisible hill markers and attach them to the 
+   -- players' vehicles, and test those markers against the volume along with 
+   -- the vehicles and bipeds. However, if (target) is an attached object, 
+   -- then the shape_contains function only tests the centerpoint of whatever 
+   -- (target) is attached to.
+   --
+   -- The final plan, then, is to spawn those hill markers but not test them. 
+   -- Instead, we spawn and retain a single "utility" marker, and we run the 
+   -- shape test by teleporting that marker to each attached marker ("node") 
+   -- on the vehicle in sequence.
+   --
+   alias volume  = global.object[1] -- must be set by the caller
+   alias vehicle = global.object[2] -- must be set by the caller; will be modified
+   alias result  = global.number[5]
+   --
+   --
+   if volume_node_checker == no_object then
+      volume_node_checker = volume.place_at_me(hill_marker, none, never_garbage_collect, 0, 0, 0, none)
+   end
+   result = 0
+   function iterate()
+      volume_node_checker.attach_to(vehicle, 0, 0, 0, relative)
+      volume_node_checker.detach()
+      if volume.shape_contains(volume_node_checker) then
+         result = 1
+      end
+      if result != 1 then
+         vehicle = vehicle.next_node
+         if vehicle != no_object then
+            iterate()
+         end
+      end
+   end
+   if vehicle != no_object then
+      iterate()
+   end
+end
 
 on init: do
    civilian_vehicle = rand(5)
    civilian_vehicle += 1
-   global.number[3] = 0
+   global.number[3] = 0 -- previous round's vehicle
    for each player do
       global.number[2] = current_player.cross_round_state
       global.number[2] &= crs_defined
@@ -114,6 +166,15 @@ on init: do
    if civilian_vehicle == global.number[3] then -- same vehicle as last round; re-roll once
       civilian_vehicle = rand(5)
       civilian_vehicle += 1
+      if civilian_vehicle == global.number[3] then
+         --
+         -- The re-roll didn't work. Just cycle to an adjacent vehicle.
+         --
+         civilian_vehicle -= 1
+         if civilian_vehicle < 1 then
+            civilian_vehicle = 5 -- max
+         end
+      end
    end
    for each player do
       current_player.cross_round_state = civilian_vehicle
@@ -122,7 +183,7 @@ on init: do
    --
    distance_traveled_update_timer.set_rate(-100%)
    for each player do
-      current_player.set_round_card_title("Hit checkpoints to complete laps.\n%n laps to win.\n[Race+ v1 by Cobb]", opt_lap_count)
+      current_player.set_round_card_title("Hit checkpoints to complete laps.\n%n laps to win.", opt_lap_count)
       current_player.best_lap_time = 3600
    end
    for each object with label "race_flag" do
@@ -190,9 +251,30 @@ for each object with label "race_flag" do -- manage checkpoint shape visibility
    end
 end
 
-for each object with label "race_spawned_vehicle" do
+for each object with label "race_spawned_vehicle" do -- delete preplaced vehicles
    if current_object.is_created_vehicle != 1 and current_object.owner == no_player then
       current_object.delete()
+   end
+end
+
+for each object with label "race_spawned_node" do -- delete preplaced objects and orphaned objects
+   if current_object.prev_node == no_object then
+      --
+      -- A vehicle was destroyed or deleted, orphaning this node.
+      --
+      alias subject = global.object[2]
+      alias target  = global.object[1]
+      subject = current_object
+      target  = no_object
+      function recursive_delete()
+         target = subject.next_node
+         subject.delete()
+         if target != no_object then
+            subject = target
+            recursive_delete()
+         end
+      end
+      recursive_delete()
    end
 end
 
@@ -204,41 +286,178 @@ for each player do -- create player vehicle when there is none
    -- 
    if current_player.vehicle == no_object then 
       alias new_vehicle = global.object[1]
+      alias node_a      = global.object[2]
+      alias node_b      = global.object[3]
+      alias node_anchor = global.object[4]
+      alias node_type   = hill_marker
+      function create_node()
+         node_b = node_a.place_at_me(node_type, "race_spawned_node", none, 0, 0, 0, none)
+         node_a.next_node = node_b
+         node_b.prev_node = node_a
+--node_b.set_shape(cylinder, 1, 1, 1) -- DEBUG
+--node_b.set_shape_visibility(everyone) -- DEBUG
+         node_a = node_b
+      end
+      function create_initial_node()
+         node_anchor = new_vehicle.place_at_me(node_type, "race_spawned_node", none, 0, 0, 0, none)
+         node_anchor.prev_node = new_vehicle
+         new_vehicle.next_node = node_anchor
+         node_anchor.copy_rotation_from(new_vehicle, true)
+         node_anchor.attach_to(new_vehicle, 0, 0, 0, relative)
+         node_a = node_anchor
+      end
+      --
+      function create_nodes_for_mongoose()
+         --
+         -- This vehicle gets its own function because Mongooses are also the 
+         -- fallback for civilian vehicles on maps that don't support them.
+         --
+         create_initial_node()
+         create_node()
+         node_a.attach_to(node_anchor, 5, 3, 0, relative)
+         create_node()
+         node_a.attach_to(node_anchor, 5, -3, 0, relative)
+         create_node()
+         node_a.attach_to(node_anchor, -5, 3, 0, relative)
+         create_node()
+         node_a.attach_to(node_anchor, -5, -3, 0, relative)
+      end
       --
       new_vehicle = no_object
       if opt_vehicle == 1 then 
          new_vehicle = current_player.biped.place_at_me(mongoose, "race_spawned_vehicle", none, 0, 0, 0, none)
+         create_nodes_for_mongoose()
       end
       if opt_vehicle == 2 then 
          new_vehicle = current_player.biped.place_at_me(warthog, "race_spawned_vehicle", none, 0, 0, 0, none)
+         create_initial_node()
+         create_node()
+         node_a.attach_to(node_anchor, 9, 5, 0, relative)
+         create_node()
+         node_a.attach_to(node_anchor, -9, -5, 0, relative)
+         create_node()
+         node_a.attach_to(node_anchor, 9, -5, 0, relative)
+         create_node()
+         node_a.attach_to(node_anchor, -9, 5, 0, relative)
       end
       if opt_vehicle == 3 then 
          new_vehicle = current_player.biped.place_at_me(ghost, "race_spawned_vehicle", none, 0, 0, 0, none)
+         create_initial_node()
+         create_node()
+         node_a.attach_to(node_anchor, -7, 0, 1, relative) -- rear
+         create_node()
+         node_a.attach_to(node_anchor, 4, 6, 0, relative) -- left wing
+         create_node()
+         node_a.attach_to(node_anchor, -4, 6, 0, relative) -- right wing
+         create_node()
+         node_a.attach_to(node_anchor, 6, 0, 1, relative) -- front
       end
       if opt_vehicle == 4 then 
          new_vehicle = current_player.biped.place_at_me(banshee, "race_spawned_vehicle", none, 0, 0, 0, none)
+         create_initial_node()
+         create_node()
+         node_a.attach_to(node_anchor, 8, 0, 7, relative) -- nose
+         create_node()
+         node_a.attach_to(node_anchor, -4, 0, 10, relative) -- base of fin
+         create_node()
+         node_a.attach_to(node_anchor, -10, 0, 1, relative) -- bottom rear
+         create_node()
+         node_a.attach_to(node_anchor, -4, 10, 2, relative) -- left wing, near tip
+         create_node()
+         node_a.attach_to(node_anchor, -4, -10, 2, relative) -- right wing, near tip
       end
       if opt_vehicle == 5 then 
          new_vehicle = current_player.biped.place_at_me(sabre, none, none, 0, 0, 0, none)
+         create_initial_node()
+         create_node()
+         node_a.attach_to(node_anchor, 31, 0, 8, relative) -- nose
+         create_node()
+         node_a.attach_to(node_anchor, 1, 0, 18, relative) -- dorsal
+         create_node()
+         node_a.attach_to(node_anchor, -46, 7, 14, relative) -- left rear fin
+         create_node()
+         node_a.attach_to(node_anchor, -46, -7, 14, relative) -- right rear fin
+         create_node()
+         node_a.attach_to(node_anchor, -22, 17, 22, relative) -- left top fin
+         create_node()
+         node_a.attach_to(node_anchor, -22, -17, 22, relative) -- right top fin
+         create_node()
+         node_a.attach_to(node_anchor, -8, 25, 8, relative) -- left front thruster
+         create_node()
+         node_a.attach_to(node_anchor, -8, -25, 8, relative) -- right front thruster
+         create_node()
+         node_a.attach_to(node_anchor, -34, 24, 8, relative) -- left rear thruster
+         create_node()
+         node_a.attach_to(node_anchor, -34, -24, 8, relative) -- right rear thruster
+         create_node()
+         node_a.attach_to(node_anchor, -38, 8, 1, relative) -- corner below left rear thruster
+         create_node()
+         node_a.attach_to(node_anchor, -38, -8, 1, relative) -- corner below right rear thruster
       end
       if opt_vehicle == 6 then 
          if civilian_vehicle == 1 then
             new_vehicle = current_player.biped.place_at_me(oni_van, none, none, 0, 0, 0, none)
+            create_initial_node()
+            create_node()
+            node_a.attach_to(node_anchor, 10, 5, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, -11, -5, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, 10, -5, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, -11, 5, 0, relative)
          end
          if civilian_vehicle == 2 then
             new_vehicle = current_player.biped.place_at_me(pickup_truck, none, none, 0, 0, 0, none)
+            create_initial_node()
+            create_node()
+            node_a.attach_to(node_anchor, 9, 5, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, -9, -5, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, 9, -5, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, -9, 5, 0, relative)
          end
          if civilian_vehicle == 3 then
             new_vehicle = current_player.biped.place_at_me(electric_cart, none, none, 0, 0, 0, none)
+            create_initial_node()
+            create_node()
+            node_a.attach_to(node_anchor, 7, 4, 0, relative) -- front-left corner
+            create_node()
+            node_a.attach_to(node_anchor, 7, -4, 0, relative) -- front-right corner
+            create_node()
+            node_a.attach_to(node_anchor, -7, 4, 0, relative) -- rear-left corner
+            create_node()
+            node_a.attach_to(node_anchor, -7, -4, 0, relative) -- rear-right corner
          end
          if civilian_vehicle == 4 then
             new_vehicle = current_player.biped.place_at_me(forklift, none, none, 0, 0, 0, none)
+            create_initial_node()
+            create_node()
+            node_a.attach_to(node_anchor, 7, 0, 0, relative) -- front
+            create_node()
+            node_a.attach_to(node_anchor, -7, 0, 0, relative) -- rear
+            --
+            -- If we want more precise checks for the forklift, we can use four markers to define 
+            -- a box with X [-7, 7] and Y [-3, 3].
+            --
          end
          if civilian_vehicle == 5 then
             new_vehicle = current_player.biped.place_at_me(semi_truck, none, none, 0, 0, 0, none)
+            create_initial_node()
+            create_node()
+            node_a.attach_to(node_anchor, 10, 6, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, -10, -6, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, 10, -6, 0, relative)
+            create_node()
+            node_a.attach_to(node_anchor, -10, 6, 0, relative)
          end
          if new_vehicle == no_object then
             new_vehicle = current_player.biped.place_at_me(mongoose, none, none, 0, 0, 0, none)
+            create_nodes_for_mongoose()
          end
       end
       current_player.vehicle = new_vehicle
@@ -258,7 +477,7 @@ for each player do -- track player vehicles
 end
 
 for each player do -- game start trigger (round card and some Race-specific state preparations)
-   current_player.set_round_card_title("Hit checkpoints to complete laps.\n%n laps to win.\n[Race+ v1 by Cobb]", opt_lap_count)
+   current_player.set_round_card_title("Hit checkpoints to complete laps.\n%n laps to win.", opt_lap_count)
    widget_speed_vehi.set_text("%n KPH", hud_player.speed_kph)
    widget_speed_foot.set_text("%n KPH", hud_player.speed_kph)
    widget_next_gate.set_text("next gate: %n  (%nm)", hud_player.next_checkpoint_number, hud_player.distance_to_next_checkpoint)
@@ -270,6 +489,7 @@ for each player do -- game start trigger (round card and some Race-specific stat
    current_player.announce_game_start_timer.set_rate(-100%)
    if current_player.announced_game_start == 0 and current_player.announce_game_start_timer.is_zero() then 
       send_incident(race_game_start, current_player, no_player)
+      game.show_message_to(current_player, none, "Race+ v1.0.0: Race enhanced by Cobb!")
       current_player.best_lap_time = 3600
       current_player.announced_game_start = 1
       current_player.announce_game_start_timer.set_rate(0%)
@@ -294,7 +514,7 @@ do
    end
 end
 
-for each player do
+for each player do -- checkpoint code
    current_player.set_co_op_spawning(true)
    current_player.biped.set_spawn_location_permissions(no_one)
    --
@@ -309,12 +529,23 @@ for each player do
       -- Let's check if the player has claimed any checkpoint with the ID they're currently 
       -- trying to reach.
       --
+      alias volume  = global.object[1]
+      alias vehicle = global.object[2]
       for each object with label "race_flag" do
          if current_object.checkpoint_id == current_player.next_checkpoint_number then 
             current_object.set_waypoint_visibility(mod_player, current_player, 1)
-            if current_object.shape_contains(current_player.biped) then 
-               current_object.set_waypoint_visibility(mod_player, current_player, 0)
-               checkpoint_is_claimed = 1
+            if checkpoint_is_claimed == 0 then
+               alias result = global.number[5]
+               result = 1
+               if not current_object.shape_contains(current_player.biped) then
+                  volume  = current_object
+                  vehicle = current_player.get_vehicle()
+                  volume_contains_vehicle()
+               end
+               if result == 1 then
+                  current_object.set_waypoint_visibility(mod_player, current_player, 0)
+                  checkpoint_is_claimed = 1
+               end
             end
          end
       end
@@ -376,7 +607,7 @@ for each player do
    end
 end
 
-for each player do
+for each player do -- UI for lap completion; best lap time tracking
    current_player.current_lap_time.set_rate(100%)
    if current_player.lap_completed_this_tick == 1 then 
       game.show_message_to(current_player, none, "Lap Complete.")
@@ -489,17 +720,30 @@ for each object with label all_landmines do -- landmines
    --
    -- Yes, this really is in the vanilla gametype script.
    --
-   global.object[1] = current_object
-   for each player do
-      if global.object[1].mine_is_armed == 0 and global.object[1].shape_contains(current_player.biped) then 
-         global.object[1].mine_is_armed = 1
-         global.object[1].detonation_timer.set_rate(-100%)
-         global.object[1].set_waypoint_priority(blink)
-         global.object[1].set_waypoint_icon(bomb)
+   if opt_mine_arm_distance > 0 then
+      alias volume = global.object[1]
+      volume = current_object
+      for each player do
+         if volume.mine_is_armed == 0 then
+            alias vehicle = global.object[2]
+            alias result  = global.number[5]
+            --
+            result = 1
+            if not volume.shape_contains(current_player.biped) then
+               vehicle = current_player.get_vehicle()
+               volume_contains_vehicle()
+            end
+            if result == 1 then
+               volume.mine_is_armed = 1
+               volume.detonation_timer.set_rate(-100%)
+               volume.set_waypoint_priority(blink)
+               volume.set_waypoint_icon(bomb)
+            end
+         end
       end
-   end
-   if current_object.detonation_timer.is_zero() then 
-      current_object.kill(false)
+      if current_object.detonation_timer.is_zero() then 
+         current_object.kill(false)
+      end
    end
 end
 
