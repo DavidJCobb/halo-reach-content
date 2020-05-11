@@ -99,7 +99,7 @@ alias widget_next_gate  = script_widget[1]
 alias widget_lap_time   = script_widget[2]
 
 alias cross_round_state = player.script_stat[0] -- bitmask, to track data across rounds
-alias crs_defined      = 32768 -- 0x8000
+alias crs_defined      = 16384 -- 0x4000 (the sign bit isn't safe for some reason?)
 alias crs_civ_veh_mask = 7     -- 0x0007
 
 alias all_landmines = 3 -- Forge label
@@ -152,7 +152,7 @@ function volume_contains_vehicle()
 end
 
 on init: do
-   civilian_vehicle = rand(5)
+   civilian_vehicle = rand(5) -- [0, 5)
    civilian_vehicle += 1
    global.number[3] = 0 -- previous round's vehicle
    for each player do
@@ -291,6 +291,10 @@ for each player do -- create player vehicle when there is none
       alias node_anchor = global.object[4]
       alias node_type   = hill_marker
       function create_node()
+         --
+         -- See comments for the (volume_contains_vehicle) function for 
+         -- information on what we're doing here.
+         --
          node_b = node_a.place_at_me(node_type, "race_spawned_node", none, 0, 0, 0, none)
          node_a.next_node = node_b
          node_b.prev_node = node_a
@@ -299,6 +303,13 @@ for each player do -- create player vehicle when there is none
          node_a = node_b
       end
       function create_initial_node()
+         --
+         -- If we attach nodes directly to the vehicle, they may anchor to 
+         -- specific parts of the vehicle e.g. the Warthog's tires or even 
+         -- its steering wheel. Attaching to (0, 0, 0) seems to always be 
+         -- safe, so we'll attach an initial node there and then attach all 
+         -- subsequent nodes to the initial node.
+         --
          node_anchor = new_vehicle.place_at_me(node_type, "race_spawned_node", none, 0, 0, 0, none)
          node_anchor.prev_node = new_vehicle
          new_vehicle.next_node = node_anchor
