@@ -13,6 +13,88 @@
 --
 -- TODO: change label "board_space_extra" to "_chess_space_extra"
 --
+-- TODO: our handling for the king being in "check" is totally wrong. for one, 
+--       you can resolve check by moving pieces other than the king: if the king 
+--       is only under threat from one piece, then you can kill that piece; we 
+--       don't allow you to move a non-king piece when you're in check, and that 
+--       is wrong. for two: you can resolve checkmate in the same way, which 
+--       means that our "checkmate" check REQUIRES us to not only check whether 
+--       the king himself has no available moves, but also whether the enemy 
+--       pieces that threaten the king are all themselves threatened by a piece 
+--       allied to the king. (for an especially devilish example of both issues, 
+--       see wikipedia's "en passant" article, "unusual examples" section; the 
+--       first example is a good case.)
+--
+--       this isn't impossible to fix.
+--
+--       first: the check(mate) testing needs to set up the following information:
+--
+--        - Is the king currently under threat?
+--
+--        - Can the king move to any spaces that are not currently under threat? 
+--          (A space is considered "under threat" if an enemy piece can move to 
+--          it. If an enemy is standing on the space, but another enemy would be 
+--          able to move there were that not the case, then the king cannot 
+--          escape check by killing the former enemy and capturing its space, so 
+--          the space is still "under threat.")
+--
+--           - We already flag all spaces in range of the king as (is_king_move) 
+--             before testing the king's enemies, so we can handle that caveat 
+--             without substantial changes to the piece move logic: for any 
+--             piece: if a space you ordinarily would be able to move to is 
+--             occupied by an ally (i.e. king's enemy), then:
+--
+--              - If the space is not flagged as a king move, then don't flag 
+--                it as a valid move.
+--
+--              - For contiguous pieces (i.e. not knights), stop testing this 
+--                direction either way.
+--
+--             So given R = Rook, K = king, P = pawn, lowercase = white, upper-
+--             case = black:
+--
+--                |R    Rk  | Pieces
+--                | XXXX X  | Valid black moves
+--                | XXXXXX  | Spaces under threat by black
+--
+--        - Which enemy pieces are currently threatening the player?
+--
+--           - Probably best stored as part of a "checkmate_flags" member:
+--
+--             0x0001 = This piece is threatening the enemy king
+--             0x0002 = Enemy king can't escape check by killing this piece
+--
+--       Once we have that information: if the king's owner is in check, then 
+--       we need to identify all valid moves for all of their pieces, and then 
+--       determine:
+--
+--        - If the king is under threat by only one enemy, can the player kill 
+--          that enemy? (This includes killing the enemy with the king, but only 
+--          if the enemy's own space is not accessible to another enemy -- thus 
+--          the caveat to "spaces not currently under threat" above.)
+--
+--           - So: only allow the player to kill that enemy with the king if the 
+--             space isn't flagged as a valid move for enemies. You can't move a 
+--             piece to a space occupied by another of your pieces, so if the 
+--             king is under threat by an enemy space that is also flagged as 
+--             enemy-accessible, then it's because having the king capture that 
+--             enemy space would leave the king in check by yet another enemy.
+--
+--        - If the king is under threat by only one enemy, can the player block 
+--          that enemy from reaching the king (i.e. can the player interpose a 
+--          piece between the enemy and the king, if the enemy is not a knight)?
+--
+--       If the king is under threat, neither of those conditions are met, and 
+--       earlier testing determined that the king cannot be moved out of danger, 
+--       then we have a checkmate.
+--
+--       In all honesty I should probably prototype this in JavaScript before 
+--       trying to implement it in Megalo. Easier to test that way.
+--
+--       As for handling a non-check checkmate? Just brute-force it. When the 
+--       player attempts a move, re-run the full checkmate test. if it fails, 
+--       then reject the move.
+--
 -- TODO: pawn initial double-move
 --
 -- TODO: pawn capture en passant
@@ -39,6 +121,9 @@
 --       is somehow moved
 --
 -- TODO: properly manage waypoint visibility for pieces
+--
+-- TODO: if multiple players are on a team, they should take turns making moves 
+--       for that team; turn order for players should be consistent
 --
 -- DONE:
 --
