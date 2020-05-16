@@ -126,7 +126,6 @@ class Space {
       this.owner = faction_none;
       //
       this.is_valid_move = false;
-      this.is_king_move  = false;
       this.threatened_by = 0;
       this.en_passant_vulnerable = false; // pawns only; must be set on the turn the pawn double-moves, and cleared on its owner's next turn
    }
@@ -494,7 +493,6 @@ function checkValidMoves(current_piece) {
 
 function showMovesFor(faction) {
    forEachSpaceDo(function(current_object) {
-      current_object.is_king_move  = false;
       current_object.is_valid_move = false;
       current_object.threatened_by = 0;
    });
@@ -530,7 +528,6 @@ function checkmateTest(faction) {
    });
    //
    forEachSpaceDo(function(current_object) {
-      current_object.is_king_move  = false;
       current_object.is_valid_move = false;
       current_object.threatened_by = 0;
    });
@@ -622,7 +619,6 @@ function checkmateTest(faction) {
          // allies, then this is not checkmate.
          //
          forEachSpaceDo(function(current_object) {
-            current_object.is_king_move  = false;
             current_object.is_valid_move = false;
             current_object.threatened_by = 0;
          });
@@ -631,7 +627,7 @@ function checkmateTest(faction) {
                checkValidMoves(current_object);
             }
          });
-         if (king_threat.is_valid_move == 0) { // TODO: this won't catch the possibility of killing (king_threat) with a capture en passant
+         if (king_threat.is_valid_move == 0) {
             //
             // A kill is not possible. Can we move a piece between it and the 
             // king instead?

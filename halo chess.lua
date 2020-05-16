@@ -13,91 +13,9 @@
 --
 -- TODO: change label "board_space_extra" to "_chess_space_extra"
 --
--- TODO: our handling for the king being in "check" is totally wrong. for one, 
---       you can resolve check by moving pieces other than the king: if the king 
---       is only under threat from one piece, then you can kill that piece; we 
---       don't allow you to move a non-king piece when you're in check, and that 
---       is wrong. for two: you can resolve checkmate in the same way, which 
---       means that our "checkmate" check REQUIRES us to not only check whether 
---       the king himself has no available moves, but also whether the enemy 
---       pieces that threaten the king are all themselves threatened by a piece 
---       allied to the king. (for an especially devilish example of both issues, 
---       see wikipedia's "en passant" article, "unusual examples" section; the 
---       first example is a good case.)
---
---       this isn't impossible to fix.
---
---       first: the check(mate) testing needs to set up the following information:
---
---        - Is the king currently under threat?
---
---        - Can the king move to any spaces that are not currently under threat? 
---          (A space is considered "under threat" if an enemy piece can move to 
---          it. If an enemy is standing on the space, but another enemy would be 
---          able to move there were that not the case, then the king cannot 
---          escape check by killing the former enemy and capturing its space, so 
---          the space is still "under threat.")
---
---           - We already flag all spaces in range of the king as (is_king_move) 
---             before testing the king's enemies, so we can handle that caveat 
---             without substantial changes to the piece move logic: for any 
---             piece: if a space you ordinarily would be able to move to is 
---             occupied by an ally (i.e. king's enemy), then:
---
---              - If the space is not flagged as a king move, then don't flag 
---                it as a valid move.
---
---              - For contiguous pieces (i.e. not knights), stop testing this 
---                direction either way.
---
---             So given R = Rook, K = king, P = pawn, lowercase = white, upper-
---             case = black:
---
---                |R    Rk  | Pieces
---                | XXXX X  | Valid black moves
---                | XXXXXX  | Spaces under threat by black
---
---        - Which enemy pieces are currently threatening the player?
---
---           - Probably best stored as part of a "checkmate_flags" member:
---
---             0x0001 = This piece is threatening the enemy king
---             0x0002 = Enemy king can't escape check by killing this piece
---
---       Once we have that information: if the king's owner is in check, then 
---       we need to identify all valid moves for all of their pieces, and then 
---       determine:
---
---        - If the king is under threat by only one enemy, can the player kill 
---          that enemy? (This includes killing the enemy with the king, but only 
---          if the enemy's own space is not accessible to another enemy -- thus 
---          the caveat to "spaces not currently under threat" above.)
---
---           - So: only allow the player to kill that enemy with the king if the 
---             space isn't flagged as a valid move for enemies. You can't move a 
---             piece to a space occupied by another of your pieces, so if the 
---             king is under threat by an enemy space that is also flagged as 
---             enemy-accessible, then it's because having the king capture that 
---             enemy space would leave the king in check by yet another enemy.
---
---        - If the king is under threat by only one enemy, can the player block 
---          that enemy from reaching the king (i.e. can the player interpose a 
---          piece between the enemy and the king, if the enemy is not a knight)?
---
---       If the king is under threat, neither of those conditions are met, and 
---       earlier testing determined that the king cannot be moved out of danger, 
---       then we have a checkmate.
---
---       In all honesty I should probably prototype this in JavaScript before 
---       trying to implement it in Megalo. Easier to test that way.
---
---       As for handling a non-check checkmate? Just brute-force it. When the 
---       player attempts a move, re-run the full checkmate test. if it fails, 
---       then reject the move.
---
--- TODO: pawn initial double-move
---
--- TODO: pawn capture en passant
+-- TODO: test checkmate handling (code is pretty much a 1:1 port from a JavaScript 
+--       implementation and it worked there, but we should still find a way to 
+--       test it in-game)
 --
 -- TODO: pawn promotion
 --
@@ -105,6 +23,8 @@
 --       and a UI message
 --
 -- TODO: short delay between checkmate and victory
+--
+--        - DONE. NEEDS TESTING.
 --
 -- TODO: when forcing players into a Monitor, check if they have a biped and if 
 --       so, place the Monitor as close to that biped's position as possible 
@@ -137,11 +57,12 @@
 --    control
 --
 
-alias species_black = script_option[1]
-alias species_white = script_option[2]
 alias species_human = 0
 alias species_elite = 1
 alias opt_turn_clock = script_option[0]
+alias species_black  = script_option[1]
+alias species_white  = script_option[2]
+alias opt_draw_rule  = script_option[3]
 
 alias faction_none  = 0
 alias faction_black = 2 -- north
@@ -173,8 +94,9 @@ alias coord_x       = object.number[0]
 alias coord_y       = object.number[1]
 alias piece_type    = object.number[2]
 alias is_valid_move = object.number[3]
-alias is_king_move  = object.number[4] -- used to check whether a king is checkmated by a pawn
-alias owner         = object.number[5]
+alias owner         = object.number[4]
+alias threatened_by = object.number[5] -- for check(mate) processing
+alias en_passant_vulnerable = object.number[6] -- pawns only; must be set on the turn the pawn double-moves, and cleared on its owner's next turn
 alias space_left    = object.object[0]
 alias space_right   = object.object[1]
 alias space_above   = object.object[2]
@@ -198,6 +120,10 @@ alias active_faction  = global.number[4] -- faction currently making a move
 declare active_faction = faction_none
 alias turn_flags      = global.number[5]
 alias temp_int_03     = global.number[6]
+alias winning_faction = global.number[7]
+declare winning_faction with network priority low = faction_none
+alias draw_turn_count = global.number[8]
+declare draw_turn_count with network priority low = 0
 --
 alias turn_flag_in_check = 0x0001
 --
@@ -207,6 +133,8 @@ alias temp_obj_02     = global.object[2]
 alias temp_obj_03     = global.object[3]
 alias selected_piece  = global.object[4] -- piece that the player is (about to be) controlling
 alias board_center    = global.object[5]
+alias temp_obj_04     = global.object[6]
+alias temp_obj_05     = global.object[7]
 alias active_player   = global.player[0] -- player currently making a move
 alias temp_plr_00     = global.player[1]
 alias temp_tem_00     = global.team[3]
@@ -226,6 +154,7 @@ alias ui_your_turn  = script_widget[0]
 alias ui_in_check   = script_widget[1]
 alias ui_bad_move   = script_widget[2]
 alias ui_turn_clock = script_widget[3]
+alias ui_endgame    = script_widget[3] -- multi-purpose widget
 
 on init: do
    team_black = team[0]
@@ -379,128 +308,130 @@ if board_created == 0 then -- generate board
 end
 
 for each object with label "board_space_extra" do -- generate missing bipeds
-   alias cell  = temp_obj_00
-   alias extra = current_object
-   alias biped = temp_obj_01
-   alias face  = temp_obj_02
-   --
-   if extra.biped == no_object then
-      cell = extra.marker
-      if cell.piece_type != piece_type_none then
-         alias species = temp_int_00
-         --
-         species = species_black
-         if cell.owner == faction_white then
-            species = species_white
-         end
-         --
-         biped = no_object
-         function setup_biped()
-            biped.is_script_created = 1
-            biped.remove_weapon(secondary, true)
-            biped.remove_weapon(primary,   true)
-            biped.copy_rotation_from(board_center, false)
+   if winning_faction == faction_none then
+      alias cell  = temp_obj_00
+      alias extra = current_object
+      alias biped = temp_obj_01
+      alias face  = temp_obj_02
+      --
+      if extra.biped == no_object then
+         cell = extra.marker
+         if cell.piece_type != piece_type_none then
+            alias species = temp_int_00
+            --
+            species = species_black
             if cell.owner == faction_white then
-               face = biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-               face.attach_to(biped, -20, 0, 0, relative)
-               face.detach()
-               biped.face_toward(face, 0, 0, 0)
-               face.delete()
+               species = species_white
             end
+            --
+            biped = no_object
+            function setup_biped()
+               biped.is_script_created = 1
+               biped.remove_weapon(secondary, true)
+               biped.remove_weapon(primary,   true)
+               biped.copy_rotation_from(board_center, false)
+               if cell.owner == faction_white then
+                  face = biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+                  face.attach_to(biped, -20, 0, 0, relative)
+                  face.detach()
+                  biped.face_toward(face, 0, 0, 0)
+                  face.delete()
+               end
+            end
+            if cell.piece_type == piece_type_pawn then
+               if species == species_human then
+                  biped = cell.place_at_me(spartan, none, none, 0, 0, 1, male)
+               else
+                  biped = cell.place_at_me(elite, none, none, 0, 0, 1, minor)
+               end
+               setup_biped()
+               biped.set_waypoint_icon(skull)
+               biped.set_waypoint_text("Pawn")
+               if biped.is_of_type(spartan) then
+                  biped.add_weapon(assault_rifle, primary)
+               else
+                  biped.add_weapon(plasma_repeater, primary)
+               end
+            end
+            if cell.piece_type == piece_type_knight then
+               if species == species_human then
+                  biped = cell.place_at_me(spartan, none, none, 0, 0, 1, emile)
+               else
+                  biped = cell.place_at_me(elite, none, none, 0, 0, 1, spec_ops)
+               end
+               setup_biped()
+               biped.set_waypoint_icon(vip)
+               biped.set_waypoint_text("Knight")
+               if biped.is_of_type(spartan) then
+                  biped.add_weapon(shotgun, primary)
+               else
+                  biped.add_weapon(energy_sword, primary)
+               end
+            end
+            if cell.piece_type == piece_type_bishop then
+               if species == species_human then
+                  biped = cell.place_at_me(spartan, none, none, 0, 0, 1, female)
+               else
+                  biped = cell.place_at_me(elite, none, none, 0, 0, 1, zealot)
+               end
+               setup_biped()
+               biped.set_waypoint_icon(bullseye)
+               biped.set_waypoint_text("Bishop")
+               if biped.is_of_type(spartan) then
+                  biped.add_weapon(grenade_launcher, primary)
+               else
+                  biped.add_weapon(concussion_rifle, primary)
+               end
+            end
+            if cell.piece_type == piece_type_rook then
+               if species == species_human then
+                  biped = cell.place_at_me(spartan, none, none, 0, 0, 1, jun)
+               else
+                  biped = cell.place_at_me(elite, none, none, 0, 0, 1, space)
+               end
+               setup_biped()
+               biped.set_waypoint_icon(bomb)
+               biped.set_waypoint_text("Rook")
+               if biped.is_of_type(spartan) then
+                  biped.add_weapon(sniper_rifle, primary)
+               else
+                  biped.add_weapon(beam_rifle, primary)
+               end
+            end
+            if cell.piece_type == piece_type_queen then
+               if species == species_human then
+                  biped = cell.place_at_me(spartan, none, none, 0, 0, 1, kat)
+               else
+                  biped = cell.place_at_me(elite, none, none, 0, 0, 1, ultra)
+               end
+               setup_biped()
+               biped.set_waypoint_icon(crown)
+               biped.set_waypoint_text("Queen")
+               if biped.is_of_type(spartan) then
+                  biped.add_weapon(rocket_launcher, primary)
+               else
+                  biped.add_weapon(plasma_launcher, primary)
+               end
+            end
+            if cell.piece_type == piece_type_king then
+               if species == species_human then
+                  biped = cell.place_at_me(spartan, none, none, 0, 0, 1, carter)
+               else
+                  biped = cell.place_at_me(elite, none, none, 0, 0, 1, general)
+               end
+               setup_biped()
+               biped.set_waypoint_icon(crown)
+               biped.set_waypoint_text("King")
+               biped.add_weapon(flag, primary)
+               -- TODO: set flag color by assigning its team
+            end
+            --
+            biped.attach_to(cell, 0, 0, 1, relative) -- enforce position (TODO: should we leave it attached?)
+            biped.detach()
+            extra.biped  = biped
+            biped.extra  = extra
+            biped.marker = cell
          end
-         if cell.piece_type == piece_type_pawn then
-            if species == species_human then
-               biped = cell.place_at_me(spartan, none, none, 0, 0, 1, male)
-            else
-               biped = cell.place_at_me(elite, none, none, 0, 0, 1, minor)
-            end
-            setup_biped()
-            biped.set_waypoint_icon(skull)
-            biped.set_waypoint_text("Pawn")
-            if biped.is_of_type(spartan) then
-               biped.add_weapon(assault_rifle, primary)
-            else
-               biped.add_weapon(plasma_repeater, primary)
-            end
-         end
-         if cell.piece_type == piece_type_knight then
-            if species == species_human then
-               biped = cell.place_at_me(spartan, none, none, 0, 0, 1, emile)
-            else
-               biped = cell.place_at_me(elite, none, none, 0, 0, 1, spec_ops)
-            end
-            setup_biped()
-            biped.set_waypoint_icon(vip)
-            biped.set_waypoint_text("Knight")
-            if biped.is_of_type(spartan) then
-               biped.add_weapon(shotgun, primary)
-            else
-               biped.add_weapon(energy_sword, primary)
-            end
-         end
-         if cell.piece_type == piece_type_bishop then
-            if species == species_human then
-               biped = cell.place_at_me(spartan, none, none, 0, 0, 1, female)
-            else
-               biped = cell.place_at_me(elite, none, none, 0, 0, 1, zealot)
-            end
-            setup_biped()
-            biped.set_waypoint_icon(bullseye)
-            biped.set_waypoint_text("Bishop")
-            if biped.is_of_type(spartan) then
-               biped.add_weapon(grenade_launcher, primary)
-            else
-               biped.add_weapon(concussion_rifle, primary)
-            end
-         end
-         if cell.piece_type == piece_type_rook then
-            if species == species_human then
-               biped = cell.place_at_me(spartan, none, none, 0, 0, 1, jun)
-            else
-               biped = cell.place_at_me(elite, none, none, 0, 0, 1, space)
-            end
-            setup_biped()
-            biped.set_waypoint_icon(bomb)
-            biped.set_waypoint_text("Rook")
-            if biped.is_of_type(spartan) then
-               biped.add_weapon(sniper_rifle, primary)
-            else
-               biped.add_weapon(beam_rifle, primary)
-            end
-         end
-         if cell.piece_type == piece_type_queen then
-            if species == species_human then
-               biped = cell.place_at_me(spartan, none, none, 0, 0, 1, kat)
-            else
-               biped = cell.place_at_me(elite, none, none, 0, 0, 1, ultra)
-            end
-            setup_biped()
-            biped.set_waypoint_icon(crown)
-            biped.set_waypoint_text("Queen")
-            if biped.is_of_type(spartan) then
-               biped.add_weapon(rocket_launcher, primary)
-            else
-               biped.add_weapon(plasma_launcher, primary)
-            end
-         end
-         if cell.piece_type == piece_type_king then
-            if species == species_human then
-               biped = cell.place_at_me(spartan, none, none, 0, 0, 1, carter)
-            else
-               biped = cell.place_at_me(elite, none, none, 0, 0, 1, general)
-            end
-            setup_biped()
-            biped.set_waypoint_icon(crown)
-            biped.set_waypoint_text("King")
-            biped.add_weapon(flag, primary)
-            -- TODO: set flag color by assigning its team
-         end
-         --
-         biped.attach_to(cell, 0, 0, 1, relative) -- enforce position (TODO: should we leave it attached?)
-         biped.detach()
-         extra.biped  = biped
-         biped.extra  = extra
-         biped.marker = cell
       end
    end
 end
@@ -523,25 +454,27 @@ for each player do -- force players into Monitor bipeds
    end
 end
 do -- UI
-   ui_your_turn.set_text("Your Turn!")
-   ui_in_check.set_text("Check!")
-   ui_bad_move.set_text("Invalid move, try another!")
-   ui_bad_move.set_icon(castle_defense)
-   ui_turn_clock.set_text("Turn Clock: %s", turn_clock)
-   --
-   temp_int_00  = turn_flags
-   temp_int_00 &= turn_flag_in_check
-   for each player do
-      ui_turn_clock.set_visibility(current_player, true)
+   if winning_faction == faction_none then
+      ui_your_turn.set_text("Your Turn!")
+      ui_in_check.set_text("Check!")
+      ui_bad_move.set_text("Invalid move, try another!")
+      ui_bad_move.set_icon(castle_defense)
+      ui_turn_clock.set_text("Turn Clock: %s", turn_clock)
       --
-      ui_your_turn.set_visibility(current_player, false)
-      ui_in_check.set_visibility(current_player, false)
-      ui_bad_move.set_visibility(current_player, false)
-      if temp_int_00 != 0 and current_player.team == active_team then
-         ui_in_check.set_visibility(current_player, true)
+      temp_int_00  = turn_flags
+      temp_int_00 &= turn_flag_in_check
+      for each player do
+         ui_turn_clock.set_visibility(current_player, true)
+         --
+         ui_your_turn.set_visibility(current_player, false)
+         ui_in_check.set_visibility(current_player, false)
+         ui_bad_move.set_visibility(current_player, false)
+         if temp_int_00 != 0 and current_player.team == active_team then
+            ui_in_check.set_visibility(current_player, true)
+         end
       end
+      ui_your_turn.set_visibility(active_player, true)
    end
-   ui_your_turn.set_visibility(active_player, true)
 end
 
 function check_valid_move()
@@ -572,17 +505,25 @@ function check_valid_move()
    alias current_piece = temp_obj_00
    alias target_space  = temp_obj_01
    alias temporary_obj = temp_obj_02
+   alias temporary_ob2 = temp_obj_03
    alias x_diff        = temp_int_00
    alias y_diff        = temp_int_01
    --
-   function bishop_check()
+   if current_piece.piece_type == piece_type_bishop
+   or current_piece.piece_type == piece_type_queen
+   then
       target_space = current_piece
       function upperleft()
          target_space = target_space.space_left
          target_space = target_space.space_above
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            upperleft()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  upperleft()
+               end
+            end
          end
       end
       upperleft()
@@ -591,9 +532,14 @@ function check_valid_move()
       function upperright()
          target_space = target_space.space_right
          target_space = target_space.space_above
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            upperright()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  upperright()
+               end
+            end
          end
       end
       upperright()
@@ -602,9 +548,14 @@ function check_valid_move()
       function lowerleft()
          target_space = target_space.space_left
          target_space = target_space.space_below
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            lowerleft()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  lowerleft()
+               end
+            end
          end
       end
       lowerleft()
@@ -613,20 +564,32 @@ function check_valid_move()
       function lowerright()
          target_space = target_space.space_right
          target_space = target_space.space_below
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            lowerright()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  lowerright()
+               end
+            end
          end
       end
       lowerright()
    end
-   function rook_check()
+   if current_piece.piece_type == piece_type_rook
+   or current_piece.piece_type == piece_type_queen
+   then
       target_space = current_piece
       function left()
          target_space = target_space.space_left
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            left()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  left()
+               end
+            end
          end
       end
       left()
@@ -634,9 +597,14 @@ function check_valid_move()
       target_space = current_piece
       function right()
          target_space = target_space.space_right
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            right()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  right()
+               end
+            end
          end
       end
       right()
@@ -644,9 +612,14 @@ function check_valid_move()
       target_space = current_piece
       function up()
          target_space = target_space.space_above
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            up()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  up()
+               end
+            end
          end
       end
       up()
@@ -654,17 +627,17 @@ function check_valid_move()
       target_space = current_piece
       function down()
          target_space = target_space.space_below
-         if target_space != no_object and target_space.piece_type == piece_type_none then
-            target_space.is_valid_move = 1
-            down()
+         if target_space != no_object then
+            target_space.threatened_by += 1
+            if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
+               target_space.is_valid_move = 1
+               if target_space.piece_type == piece_type_none then
+                  down()
+               end
+            end
          end
       end
       down()
-   end
-   if current_piece.piece_type == piece_type_bishop
-   or current_piece.piece_type == piece_type_queen
-   then
-      bishop_check()
    end
    if current_piece.piece_type == piece_type_knight then
       for each object with label "board_space" do
@@ -674,18 +647,17 @@ function check_valid_move()
          y_diff -= current_object.coord_y
          x_diff *= y_diff
          if x_diff == 2 or x_diff == -2 then -- (2 * 1) or (-2 * 1) or (2 * -1) or (-2 * -1)
-            current_object.is_valid_move = 1
+            current_object.is_threatened_by += 1
+            if current_object.piece_type == piece_type_none or current_object.owner != current_piece.owner then
+               current_object.is_valid_move = 1
+            end
          end
       end
    end
-   if current_piece.piece_type == piece_type_rook
-   or current_piece.piece_type == piece_type_queen
-   then
-      rook_check()
-   end
    if current_piece.piece_type == piece_type_king then
       function _set_if() -- if we inlined this, each copy would be a separate trigger. since they're all identical, let's just make it a function so we're not compiling tons of duplicate data
-         if target_space.piece_type == piece_type_none then
+         target_space.is_threatened_by = 1
+         if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
             target_space.is_valid_move = 1
          end
       end
@@ -707,154 +679,336 @@ function check_valid_move()
       _set_if()
    end
    if current_piece.piece_type == piece_type_pawn then
-      target_space  = current_piece.space_above
-      temporary_obj = current_piece.space_above
-      if current_piece.owner == faction_black then -- black starts north and moves south
-         target_space  = current_piece.space_below
-         temporary_obj = target_space.space_below
+      alias single_move = target_space
+      alias double_move = temporary_obj
+      alias double_from = y_diff
+      --
+      single_move = current_piece.space_above
+      double_move = single_move.space_above
+      double_from = 6
+      if current_piece.owner == faction_black then
+         single_move = current_piece.space_below
+         double_move = single_move.space_below
+         double_from = 1
       end
-      if target_space.piece_type == piece_type_none then
-         target_space.is_valid_move = 1
-      end
-      --
-      -- TODO: Check whether double-forward movement to space (temporary_obj) 
-      -- is possible.
-      --
-      
-      --
-      -- Check whether diagonal capture is possible.
-      --
-      function _check_diagonal() -- if we inlined this, each copy would be a separate trigger. since they're all identical, let's just make it a function so we're not compiling tons of duplicate data
-         temporary_obj.is_valid_move |= temporary_obj.is_king_move
-         if  temporary_obj.piece_type != piece_type_none
-         and temporary_obj.owner != current_piece.owner
-         then
-            temporary_obj.is_valid_move = 1
+      if single_move.piece_type == piece_type_none then
+         single_move.is_valid_move = true
+         if current_piece.coord_y == double_from and double_move.piece_type == piece_type_none then
+            double_move.is_valid_move = true
          end
       end
-      temporary_obj = target_space.space_left
+      --
+      -- Check for diagonal capture possibilities, including capturing en passant:
+      --
+      alias diagonal = temporary_obj
+      alias passant  = temporary_ob2
+      function _check_diagonal()
+         diagonal.threatened_by += 1
+         --
+         passant = diagonal.space_below
+         if current_piece.owner == faction_black then
+            passant = diagonal.space_above
+         end
+         --
+         if diagonal.piece_type == piece_type_none and diagonal.owner != current_piece.owner then
+            diagonal.is_valid_move = 1
+         end
+         if  diagonal.piece_type != piece_type_none
+         and passant.piece_type == piece_type_pawn
+         and passant.owner != current_piece.owner
+         then
+            diagonal.is_valid_move = 1
+         end
+      end
+      diagonal = single_move.space_left
       _check_diagonal()
-      temporary_obj = target_space.space_right
+      diagonal = single_move.space_right
       _check_diagonal()
-      --
-      -- TODO: If the player actually moves their pawn diagonally, then we need 
-      -- to check for a capture en passant. If an enemy pawn uses its initial 
-      -- move to travel two spaces forward and lands next to your pawn, then 
-      -- you can (on the very next turn only) move your pawn diagonally behind 
-      -- the enemy pawn *and* capture that enemy pawn. This is called "capturing 
-      -- en passant," or "in passing."
-      --
-      -- We'll also have to handle pawn promotion at the time that a pawn is 
-      -- moved to the end of the board. The ONLY limitation on pawn promotion 
-      -- is that a pawn cannot be promoted to a king or to a pawn (i.e. you MUST 
-      -- promote the pawn; you cannot leave it unpromoted and immobilized).
-      --
    end
 end
 
+function _reset_board_for_move_checks()
+   for each object with label "board_space" do
+      current_object.is_valid_move = 0
+      current_object.threatened_by = 0
+   end
+end
 function is_king_in_check()
-   alias king = temp_obj_03 -- which king to check; must be set by the caller
+   alias king        = temp_obj_04 -- which king to check; must be set by the caller
+   alias king_threat = temp_obj_05
    alias king_in_checkmate = temp_int_00 -- out
    alias king_in_check     = temp_int_01 -- out
    --
    king_in_checkmate = 0
    king_in_check     = 0
    if king != no_object then
-      for each object with label "board_space" do
-         current_object.is_valid_move = 0
-         current_object.is_king_move  = 0
-      end
-      --
-      -- Flag every space within reach of the king as a "king move space," so that 
-      -- enemy pawn movement checks treat these spaces the same way they would an 
-      -- occupied space (i.e. the pawn tests as being able to diagonally capture 
-      -- onto these spaces). Don't bother checking whether the king can actually 
-      -- move to these spaces (i.e. whether they are unoccupied). Nothing else 
-      -- needs us to check that from here.
-      --
-      alias temporary_obj = temp_obj_01
-      temporary_obj = king.space_left
-      temporary_obj.is_king_move = 1
-      temporary_obj = temporary_obj.space_above -- upper-left
-      temporary_obj.is_king_move = 1
-      temporary_obj = king.space_right
-      temporary_obj.is_king_move = 1
-      temporary_obj = temporary_obj.space_below -- lower-right
-      temporary_obj.is_king_move = 1
-      temporary_obj = king.space_above
-      temporary_obj.is_king_move = 1
-      temporary_obj = temporary_obj.space_right -- upper-right
-      temporary_obj.is_king_move = 1
-      temporary_obj = king.space_below
-      temporary_obj.is_king_move = 1
-      temporary_obj = temporary_obj.space_left -- lower-left
-      temporary_obj.is_king_move = 1
-      --
+      _reset_board_for_move_checks()
       for each object with label "board_space" do
          if current_object.piece_type != piece_type_none and current_object.owner != king.owner then
             global.object[0] = current_object -- parameter for next function call
             check_valid_move()
+            if king.is_valid_move == 1 then
+               king.is_valid_move = 0
+               king_threat = current_object
+            end
          end
       end
       --
-      -- Now that all of the data we need is set up, we can check whether the king 
-      -- is in check, and whether they're in checkmate. We'll consider them to be 
-      -- in checkmate by default, and free them from checkmate if the king has any 
-      -- legal moves that are not vulnerable to enemy pieces. In addition to being 
-      -- more efficient, this approach also means that if the king has no legal 
-      -- moves (e.g. they are totally boxed in by adjacent pieces), we'll properly 
-      -- flag them as being in checkmate.
-      --
-      king_in_check     = king.is_valid_move -- can the enemy move to where the king is?
-      king_in_checkmate = king_in_check
-      for each object with label "board_space" do
-         if  current_object.is_king_move  == 1 -- this space is within reach of the king we're testing
-         and current_object.is_valid_move == 0 -- no enemy can move here
-         and current_object.piece_type == piece_type_none -- no one is standing here
-         then
-            king_in_checkmate = 0
+      if king.threatened_by > 0 then
+         king_in_check = 1
+         --
+         alias safe_space   = temp_obj_00
+         alias target_space = temp_obj_01
+         function _set_if()
+            if target_space.threatened_by == 0 then
+               if target_space.piece_type == piece_type_none or target_space.owner != king.owner then
+                  safe_space = target_space;
+               end
+            end
+         end
+         target_space = king.space_left;
+         _set_if();
+         target_space = target_space.space_above -- upper-left
+         _set_if();
+         target_space = king.space_right;
+         _set_if();
+         target_space = target_space.space_below -- lower-right
+         _set_if();
+         target_space = king.space_above;
+         _set_if();
+         target_space = target_space.space_right -- upper-right
+         _set_if();
+         target_space = king.space_below;
+         _set_if();
+         target_space = target_space.space_left -- lower-left
+         _set_if();
+         if safe_space == no_object then
+            --
+            -- The king cannot move to an unoccupied space or kill an enemy without 
+            -- ending up under threat from another enemy.
+            --
+            if king.threatened_by > 1 then
+               --
+               -- The king is under threat by multiple enemies. His team can kill 
+               -- only one of them in a single turn; thus he is in checkmate.
+               --
+               king_in_checkmate = 1
+            end
+            if king.threatened_by == 1 then
+               alias can_escape = temp_int_02
+               can_escape = 0
+               if king_threat.en_passant_vulnerable == 1 then
+                  --
+                  -- The king is under threat by a pawn. Can one of his allies 
+                  -- capture it en passant?
+                  --
+                  alias side = temp_obj_00
+                  side = king_threat.space_above
+                  if king_threat.owner == faction_white then
+                     side = king_threat.space_below
+                  end
+                  if side.owner == king_threat.owner or side.piece_type == piece_type_none then
+                     side = king_threat.space_left
+                     if side and side.owner == king.owner and side.piece_type == piece_type_pawn then
+                        can_escape = 1
+                     end
+                     side = king_threat.space_right
+                     if side and side.owner == king.owner and side.piece_type == piece_type_pawn then
+                        can_escape = 1
+                     end
+                  end
+               end
+               if can_escape == 0 then
+                  --
+                  -- If the piece threatening the king can be killed by one of the 
+                  -- king's allies, then this is not checkmate.
+                  --
+                  _reset_board_for_move_checks()
+                  for each object with label "board_space" do
+                     if  current_object.piece_type != piece_type_none
+                     and current_object.piece_type != piece_type_king
+                     and current_object.owner == king.owner
+                     then
+                        global.object[0] = current_object -- parameter for next function call
+                        check_valid_move()
+                     end
+                  end
+                  if king_threat.is_valid_move == 0 then
+                     --
+                     -- A kill is not possible. Can we move a piece between it and the king 
+                     -- instead?
+                     --
+                     if king_threat.piece_type == piece_type_knight then
+                        --
+                        -- You can't physically block a knight.
+                        --
+                        king_in_checkmate = 1
+                     else
+                        --
+                        -- We've already identified every space that the king's allies can 
+                        -- move to. Let's take the unoccupied spaces and temporarily change 
+                        -- their piece type to a dummy value. Then, we'll re-check what 
+                        -- spaces the (king_threat) can move to: the dummy value will cause 
+                        -- it to treat those spaces as being occupied (i.e. blocked), and if 
+                        -- because of that it can't reach the king, then physically blocking 
+                        -- it from the king is indeed posible.
+                        --
+                        for each object with label "board_space" do
+                           current_object.threatened_by = 0
+                           if current_object.is_valid_move == 1 then
+                              current_object.is_valid_move = 0
+                              if current_object.piece_type == piece_type_none then
+                                 current_object.piece_type = piece_type_dummy
+                              end
+                           end
+                        end
+                        global.object[0] = king_threat -- parameter for next function call
+                        check_valid_move()
+                        for each object with label "board_space" do
+                           if current_object.piece_type == piece_type_dummy then
+                              current_object.piece_type = piece_type_none
+                           end
+                        end
+                        if king.is_valid_move then
+                           --
+                           -- The king's allies can't block this enemy from threatening the 
+                           -- king.
+                           --
+                           king_in_checkmate = 1
+                        end
+                     end
+                  end
+               end
+            end
          end
       end
+      --
    end
 end
 
-function on_move_made()
-   alias previous_faction = temp_int_00
+function begin_victory()
    --
-   previous_faction = active_faction
-   active_faction  = faction_white
-   active_team     = team_white
-   if previous_faction == faction_white then
-      active_faction = faction_black
-      active_team    = team_black
-   end
-   temp_obj_00 = active_player.biped
-   if temp_obj_00.is_script_created != 0 then -- turn clock ran out while the active player had control of a biped
-      temp_obj_00.delete()
-   end
-   active_player.target_space = no_object
-   active_player = no_player
+   -- This subroutine triggers the beginning of a victory sequence, in which the 
+   -- winning team is awarded a point and given a brief opportunity to kill the 
+   -- enemy king.
    --
-   selected_piece = no_object
-   turn_clock.reset()
-   turn_flags = 0
-   temp_obj_03 = no_object
-   for each object with label "board_space" do
-      if current_object.piece_type == piece_type_king and current_object.owner == active_faction then
-         temp_obj_03 = current_object
+   -- Note that the enemy king may already be dead. There are two ways to win:
+   -- 
+   --  - You placed the enemy in checkmate.
+   --
+   --  - You placed the enemy in check, and they did not make a move before the 
+   --    turn clock ran out, allowing you to kill their king the next turn.
+   --
+   if winning_faction == faction_none then
+      alias faction_to_win = temp_int_00 -- argument
+      alias team_to_win    = temp_tem_00
+      --
+      team_to_win = team_black
+      if faction_to_win == faction_white then
+         team_to_win = team_white
       end
-   end
-   is_king_in_check() -- check if the previously-made move has put this player in check
-   if temp_int_01 != 0 then -- active faction is in check!
-      turn_flags |= turn_flag_in_check
-      if temp_int_00 != 0 then -- active faction is in checkmate!
-         active_team.enemy.score += 1
+      winning_faction = temp_int_00
+      team_to_win.score += 1
+      --
+      alias losing_king_alive = temp_int_00
+      losing_king_alive = 0
+      for each object with label "board_space" do
+         if current_object.piece_type == piece_type_king and current_object.owner != winning_faction then
+            losing_king_alive = 1
+         end
+      end
+      if losing_king_alive == 0 then
          game.end_round()
       end
    end
 end
 
-do
+function end_turn()
+   if faction_to_win == faction_none then
+      alias previous_faction = temp_int_00
+      --
+      previous_faction = active_faction
+      active_faction  = faction_white
+      active_team     = team_white
+      if previous_faction == faction_white then
+         active_faction = faction_black
+         active_team    = team_black
+      end
+      temp_obj_00 = active_player.biped
+      if temp_obj_00.is_script_created != 0 then -- turn clock ran out while the active player had control of a biped
+         temp_obj_00.delete()
+      end
+      active_player.target_space = no_object
+      active_player  = no_player
+      selected_piece = no_object
+      --
+      alias active_king = temp_obj_04
+      turn_clock.reset()
+      turn_flags  = 0
+      active_king = no_object
+      for each object with label "board_space" do
+         if current_object.owner == active_faction then
+            if current_object.en_passant_vulnerable == 1 then
+               --
+               -- When a faction begins a new turn, clear this flag on any of their pawns that 
+               -- had it set from a previous turn.
+               --
+               current_object.en_passant_vulnerable = 0
+            end
+            if current_object.piece_type == piece_type_king then
+               active_king = current_object
+            end
+         end
+      end
+      is_king_in_check() -- check if the previously-made move has put this player in check
+      if temp_int_01 != 0 then -- active faction is in check!
+         turn_flags |= turn_flag_in_check
+         if temp_int_00 != 0 then -- active faction is in checkmate!
+            temp_int_00 = previous_faction
+            begin_victory() -- victory condition: checkmate
+         end
+      end
+      --
+      alias pawn_count = temp_int_00
+      pawn_count = 0
+      for each object with label "board_space" do
+         if current_object.piece_type == piece_type_pawn then
+            pawn_count += 1
+         end
+      end
+      if pawn_count == 0 then
+         draw_turn_count += 1
+      end
+   end
+end
+function commit_move()
+   alias target_space = temp_obj_00 -- argument
+   alias target_biped = temp_obj_01 -- argument
+   --
+   if selected_piece.piece_type == piece_type_pawn then -- handle en-passant vulnerability state
+      alias y_diff = temp_int_00
+      y_diff  = selected_piece.coord_y
+      y_diff -= target_space.coord_y
+      if y_diff == 2 or y_diff == -2 then
+         target_space.en_passant_vulnerable = 1
+      end
+   end
+   if target_space.piece_type == piece_type_king then -- king was killed
+      temp_int_00 = selected_piece.owner
+      begin_victory() -- victory condition: killed king
+   end
+   --
+   target_space.piece_type = selected_piece.piece_type
+   target_space.owner      = selected_piece.owner
+   selected_piece.piece_type = piece_type_none
+   selected_piece.owner      = faction_none
+   selected_piece.en_passant_vulnerable = 0
+   target_biped.delete()
+   --
+   end_turn()
+end
+
+if winning_faction == faction_none then -- handle picking a piece and handle making a move
    turn_clock.set_rate(-100%)
    if active_faction == faction_none then
       active_faction = faction_white
@@ -982,14 +1136,9 @@ do
          if active_player.selection_timer.is_zero() then
             alias cell = temp_obj_00
             --
-            cell = active_player.target_space
-            cell.piece_type = selected_piece.piece_type
-            cell.owner      = selected_piece.owner
-            selected_piece.piece_type = piece_type_none
-            selected_piece.owner      = faction_none
-            --
-            extra.biped.delete()
-            on_move_made()
+            temp_obj_00 = active_player.target_space
+            temp_obj_01 = extra.biped
+            commit_move()
          end
       end
       --
@@ -998,7 +1147,7 @@ do
       --
    end
    if turn_clock.is_zero() and opt_turn_clock > 0 then
-      on_move_made()
+      end_turn()
    end
 end
 on object death: do
@@ -1010,6 +1159,13 @@ on object death: do
       cell  = killed_object.marker
       extra = killed_object.extra
       killed_object.delete()
+      --
+      if winning_faction != faction_none and cell.piece_type == piece_type_king then
+         if cell.owner != winning_faction then
+            game.end_round()
+         end
+      end
+      --
       if  killer_object.is_script_created == 1
       and killer_object.marker != no_object
       and selected_piece != no_object
@@ -1017,33 +1173,68 @@ on object death: do
          if  killed_object.owner != selected_piece.owner
          and cell.is_valid_move == 1
          then -- active player is allowed to capture this square
-            cell.piece_type = selected_piece.piece_type
-            cell.owner      = selected_piece.owner
-            selected_piece.piece_type = piece_type_none
-            selected_piece.owner      = faction_none
-            --
             killer_object.delete()
-            on_move_made()
+            if winning_faction == faction_none then
+               temp_obj_00 = cell
+               temp_obj_01 = no_object
+               commit_move()
+               draw_turn_count = 0 -- reset the 75-rule counter if a piece was killed
+            end
          end
       end
    end
 end
 
-do -- check for draw conditions
+function do_endgame_ui_visibility()
+   for each player do
+      ui_your_turn.set_visibility(current_player, false)
+      ui_in_check.set_visibility(current_player, false)
+      ui_bad_move.set_visibility(current_player, false)
+      -- ui_turn_clock and ui_endgame are the same widget
+      ui_endgame.set_visibility(current_player, true)
+   end
+end
+
+if winning_faction != faction_none then
+   alias winning_biped_count = temp_int_00
    --
-   -- TODO: Check for the 75-move rule: if 75 moves pass without there being pawns on 
-   -- the board, and without either player capturing an enemy piece, then the game will 
-   -- automatically end in a draw. Some places allow players to manually request a draw 
-   -- at every 50-move threshold; I don't want to code in a mechanism for requesting a 
-   -- draw, but we can make the move threshold for an automatic draw a script_option.
-   --
-   
+   winning_biped_count = 0
+   for each object with label "board_space_extra" do
+      current_object.biped.set_invincibility(0)
+      if current_object != no_object and current_object.owner == winning_faction then
+         winning_biped_count += 1
+         if not current_object.out_of_bounds() then
+            current_object.biped.set_invincibility(1)
+         end
+      end
+   end
+   if winning_biped_count == 0 then -- the winners lost all bipeds and can't kill the king
+      game.end_round()
+   end
+   ui_endgame.set_text("%s won!", team_black)
+   if winning_faction == faction_white then
+      ui_endgame.set_text("%s won!", team_white)
+   end
+   do_endgame_ui_visibility()
+end
+
+if winning_faction == faction_none -- check for draw conditions
+   if opt_draw_rule > 0 and draw_turn_count >= opt_draw_rule then
+      --
+      -- If 75 moves (by default) pass without there being pawns on the board, and 
+      -- without either player capturing an enemy piece, then the game will end in 
+      -- a draw automatically.
+      --
+      ui_endgame.set_text("Draw! (%n turns passed with no pawns and no captures.)", draw_turn_count)
+      do_endgame_ui_visibility()
+      game.end_round()
+   end
    --
    -- Check for insufficient material condition 1: one side only has a king, and 
    -- the other side only has a king and one knight OR a king and one bishop.
    --
-   alias knights_and_bishops = global.number[0]
-   alias any_other_pieces    = global.number[1]
+   alias knights_and_bishops = temp_int_00
+   alias any_other_pieces    = temp_int_01
    knights_and_bishops = 0
    any_other_pieces    = 0
    for each object with label "board_space" do
@@ -1061,16 +1252,43 @@ do -- check for draw conditions
    end
    if any_other_pieces == 0 then
       if knights_and_bishops == 1 then
-         --
-         -- TODO: The insufficient material condition has been met. It is impossible 
-         -- for either team to checkmate the other, so the game should end on a draw.
-         --
+         ui_endgame.set_text("Draw! (Insufficient material.)")
+         do_endgame_ui_visibility()
          game.end_round()
       end
       --
-      -- TODO: Check for insufficient material condition 2: each side has one king and one 
-      -- bishop, and the bishops are both on the same color. We've already confirmed that 
-      -- the only pieces in play are kings, knights, and bishops.
+      -- Check for insufficient material condition 2: each side has one king and 
+      -- one bishop, and the bishops are both on the same color. We've already 
+      -- confirmed the only pieces in play are kings, knights, and bishops.
       --
+      alias bishops_black = temp_int_00
+      alias bishops_white = temp_int_01
+      alias b_align_black = temp_int_02
+      alias b_align_white = temp_int_03
+      bishops_black = 0
+      bishops_white = 0
+      b_align_black = 0
+      b_align_white = 1
+      for each object with label "board_space" do
+         if current_object.piece_type == piece_type_bishop then
+            if current_object.owner == faction_black then
+               bishops_black += 1
+               b_align_black  = current_object.coord_x
+               b_align_black += current_object.coord_y
+               b_align_black %= 2
+            end
+            if current_object.owner == faction_white then
+               bishops_white += 1
+               b_align_white  = current_object.coord_x
+               b_align_white += current_object.coord_y
+               b_align_white %= 2
+            end
+         end
+      end
+      if bishops_black == 1 and bishops_white == 1 and b_align_black == b_align_white then
+         ui_endgame.set_text("Draw! (Insufficient material.)")
+         do_endgame_ui_visibility()
+         game.end_round()
+      end
    end
 end
