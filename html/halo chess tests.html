@@ -32,6 +32,7 @@ body{display:flex;flex-flow:row nowrap}
                       -1px  0px 0 #000;
       }
       #chessboard .space.valid-move{border:2px solid #4FF}
+      #chessboard .space.can-be-avenged{border:1px solid #E40}
 
 .tool-panel{
    border:1px solid #FFF;
@@ -120,8 +121,10 @@ class Space {
       this.piece_type = piece_type_none;
       this.owner = faction_none;
       //
-      this.is_valid_move = false;
-      this.is_king_move  = false;
+      this.is_valid_move  = false;
+      this.is_king_move   = false;
+      this.can_be_avenged = false; // if this piece is captured, can one of its allies avenge it? (needed for checkmate testing)
+      this.threatened_by  = 0;
    }
 };
 
@@ -265,6 +268,11 @@ function checkValidMoves(current_piece) {
    let y_diff;
    let target_space;
    let temporary_obj;
+   let temporary_ob2;
+   function _avenge_check_ts() {
+      if (target_space.owner == current_piece.owner)
+         target_space.can_be_avenged = true;
+   }
    if (current_piece.piece_type == piece_type_bishop || current_piece.piece_type == piece_type_queen) {
       target_space = current_piece;
       (function upperleft() {
@@ -272,6 +280,7 @@ function checkValidMoves(current_piece) {
          if (target_space) // omit this condition in Megalo
             target_space = target_space.space_above;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
                upperleft()
@@ -284,6 +293,7 @@ function checkValidMoves(current_piece) {
          if (target_space) // omit this condition in Megalo
             target_space = target_space.space_above;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
                upperright()
@@ -296,6 +306,7 @@ function checkValidMoves(current_piece) {
          if (target_space) // omit this condition in Megalo
             target_space = target_space.space_below;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
                lowerleft()
@@ -308,6 +319,7 @@ function checkValidMoves(current_piece) {
          if (target_space) // omit this condition in Megalo
             target_space = target_space.space_below;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
                lowerright()
@@ -320,6 +332,7 @@ function checkValidMoves(current_piece) {
       (function left() {
          target_space = target_space.space_left;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
                left();
@@ -330,6 +343,7 @@ function checkValidMoves(current_piece) {
       (function right() {
          target_space = target_space.space_right;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
                right();
@@ -340,6 +354,7 @@ function checkValidMoves(current_piece) {
       (function up() {
          target_space = target_space.space_above;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
                up();
@@ -350,6 +365,7 @@ function checkValidMoves(current_piece) {
       (function down() {
          target_space = target_space.space_below;
          if (target_space != no_object) {
+            _avenge_check_ts();
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
                down();
@@ -359,12 +375,15 @@ function checkValidMoves(current_piece) {
    }
    if (current_piece.piece_type == piece_type_knight) {
       forEachSpaceDo(function(current_object) {
-         if (current_object.piece_type == piece_type_none || current_object.owner != current_piece.owner) {
-            x_diff = current_piece.coord_x - current_object.coord_x;
-            y_diff = current_piece.coord_y - current_object.coord_y;
-            x_diff *= y_diff;
-            if (x_diff == 2 || x_diff == -2) {
+         x_diff = current_piece.coord_x - current_object.coord_x;
+         y_diff = current_piece.coord_y - current_object.coord_y;
+         x_diff *= y_diff;
+         if (x_diff == 2 || x_diff == -2) {
+            if (current_object.piece_type == piece_type_none || current_object.owner != current_piece.owner) {
                current_object.is_valid_move = true;
+               if (current_object.owner == current_piece.owner) {
+                  current_object.can_be_avenged = true;
+               }
             }
          }
       });
@@ -409,34 +428,48 @@ function checkValidMoves(current_piece) {
          }
       }
       //
-      // Diagonal capture:
+      // Diagonal capture, including en passant:
       //
       function _check_diagonal() {
-         if (!temporary_obj) return; // JS-only
-         temporary_obj.is_valid_move |= temporary_obj.is_king_move;
-         if (temporary_obj.piece_type != piece_type_none && temporary_obj.owner != current_piece.owner) {
-            temporary_obj.is_valid_move = 1;
+         let diagonal = temporary_obj;
+         let passant  = temporary_ob2;
+         if (!diagonal) return; // JS-only
+         function _flag_diagonal() {
+            if (diagonal.owner == current_piece.owner) {
+               diagonal.can_be_avenged = true;
+            }
+            if (diagonal.owner != current_piece.owner) {
+               diagonal.is_valid_move = 1;
+            }
+         }
+         diagonal.is_valid_move |= diagonal.is_king_move;
+         passant = diagonal.space_below;
+         if (current_piece.owner == faction_black)
+            passant = diagonal.space_above;
+         if (diagonal.piece_type != piece_type_none) {
+            _flag_diagonal()
+         }
+         if (passant.piece_type == piece_type_pawn && passant.owner != current_piece.owner) {
+            _flag_diagonal()
          }
       }
       temporary_obj = target_space ? target_space.space_left : no_object;
       _check_diagonal();
       temporary_obj = target_space ? target_space.space_right : no_object;
       _check_diagonal();
-      //
-      // TODO: en passant
-      //
-      
    }
 }
 
 function showMovesFor(faction) {
    forEachSpaceDo(function(current_object) {
-      current_object.is_king_move  = false;
-      current_object.is_valid_move = false;
+      current_object.is_king_move   = false;
+      current_object.is_valid_move  = false;
+      current_object.can_be_avenged = false;
    });
    forEachSpaceDo(function(current_object) {
-      if (current_object.owner == faction)
+      if (current_object.piece_type != piece_type_none && current_object.owner == faction) {
          checkValidMoves(current_object);
+      }
    });
    let board = document.getElementById("chessboard");
    for(let i = 0; i < _spaces.length; ++i) {
@@ -445,6 +478,10 @@ function showMovesFor(faction) {
          node.classList.add("valid-move");
       else
          node.classList.remove("valid-move");
+      if (_spaces[i].can_be_avenged)
+         node.classList.add("can-be-avenged");
+      else
+         node.classList.remove("can-be-avenged");
    }
 }
 document.getElementById("test-moves-white").addEventListener("click", function(e) {
@@ -453,6 +490,20 @@ document.getElementById("test-moves-white").addEventListener("click", function(e
 document.getElementById("test-moves-black").addEventListener("click", function(e) {
    showMovesFor(faction_black);
 });
+
+function checkmateTest(faction) {
+   forEachSpaceDo(function(current_object) {
+      current_object.is_king_move   = false;
+      current_object.is_valid_move  = false;
+      current_object.can_be_avenged = false;
+   });
+   forEachSpaceDo(function(current_object) {
+      if (current_object.piece_type != piece_type_none && current_object.owner != faction) {
+         checkValidMoves(current_object);
+      }
+   });
+   
+}
 
       </script>
    </body>
