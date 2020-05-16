@@ -35,6 +35,31 @@
 -- TODO: if multiple players are on a team, they should take turns making moves 
 --       for that team; turn order for players should be consistent
 --
+-- TODO: spawning the player into a Monitor after a move: i think official halo 
+--       chess uses an offset of (-15, 0, 15); try that and see if it's consistent 
+--       with gameplay videos. (currently we do (0, 0, 6); i've been meaning to 
+--       try out (-4, 0, 5) and see if that looks a bit better.)
+--
+-- TODO: sometimes there is a constant alarm sound which begins immediately at the 
+--       start of the match and may play indefinitely; I think it may result from 
+--       forcibly reassigning the player's biped but I don't know exactly why. 
+--       it's obnoxious -- easily qualifying as making chess unplayable.
+--
+--       UPDATE: it's sound\weapons\missile_launcher\tracking_locking\locking\loop
+--
+--               why? "missile_launcher" is leftover sounds for the H3 missile pod.
+--               i can't find any references to the tag, but then the usual tools 
+--               don't let you search for that.
+--
+--       this happened to me in another test, when i was checking whether i could 
+--       force players into a biped before the initial loadout camera, though in 
+--       that case it stopped when that biped died. try modifying the script so 
+--       that players aren't forced into a Monitor until they've spawned for the 
+--       first time (and then be sure to test respawning)
+--
+--        - halo chess official only removes the monitor's weapons on spawn. check 
+--          if constantly removing them is aggravating this weird problem
+--
 -- DONE:
 --
 --  - Piece selection (and the ability to re-select)
@@ -1285,13 +1310,15 @@ end
 
 if winning_faction != faction_none then
    alias winning_biped_count = temp_int_00
+   alias cell = temp_obj_00
    --
    winning_biped_count = 0
    for each object with label "board_space_extra" do
       current_object.biped.set_invincibility(0)
-      if current_object != no_object and current_object.owner == winning_faction then
+      cell = current_object.marker
+      if current_object.biped != no_object and cell.owner == winning_faction then
          winning_biped_count += 1
-         if not current_object.is_out_of_bounds() then
+         if not current_object.biped.is_out_of_bounds() then
             current_object.biped.set_invincibility(1)
          end
       end
