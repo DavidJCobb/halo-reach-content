@@ -9,23 +9,96 @@
 --
 
 --
--- TODO: change label "board_space" to "_chess_space"
+-- TODO: if a player's move would put their king in check, revert the move and 
+--       force them to try another. (we can't disallow these moves in advance 
+--       because we'd have to detect cases like if the player has a piece in 
+--       between the king and an enemy rook, and they move that piece, exposing 
+--       their own king -- just lots of things that are indirect and harder to 
+--       test for than their complimentary cases in the checkmate logic.)
 --
--- TODO: change label "board_space_extra" to "_chess_space_extra"
+--        - if the player has no permitted moves, and there is no time limit on 
+--          turns, then this will softlock. how do we deal with that?
 --
--- TODO: disallow moving your own king into check, or revert such moves when they 
---       are made
+--        - hm... it might be possible to forbid moves that would put a player's 
+--          own king in check, but it'd be really tricky. we would have to...
+--
+--           - identify all spaces threatened by an enemy piece, and disallow 
+--             moving the king there. simple.
+--
+--           - to prevent the player from moving a piece that is blocking their 
+--             king from being in check: when setting up a piece's valid moves, 
+--             check if its allied king is off in any cardinal or diagonal 
+--             direction (with no other allied pieces between the current piece 
+--             and the king). if so, check the opposite direction for either an 
+--             enemy queen or (depending on whether it's cardinal or diagonal) 
+--             an enemy rookor bishop. if a matching enemy is found, then the 
+--             current piece cannot be moved without putting the king in check.
+--
+--              - pawns can only capture kings diagonally, from adjacent spaces, 
+--                and so cannot be blocked. we can ignore enemy pawns.
+--
+--              - enemy knights can leap over pieces and so can be ignored here 
+--                (what we're trying to prevent is moving a king-allied piece 
+--                that is blocking the king from being in check; you cannot 
+--                block a knight). the enemy king can be ignored as well, since 
+--                kings can't traverse across multiple spaces: they must be 
+--                adjacent to each other to threaten each other and so cannot 
+--                be blocked.
+--
+--              = this could lead to ugly UX, where we indicate that a piece 
+--                can be controlled only to punt the user out and tell them that 
+--                they can't safely move it. if we make this code a function, we 
+--                can call it on all of the player's pieces and disallow the 
+--                player from even taking control of pieces that can't be safely 
+--                moved. of course, we'd need to indicate WHY we're doing this, 
+--                and i'm not sure we have the UI widgets to spare; we'll need 
+--                to make some changes...
+--          
+--          there is an uglier alternative approach, which would require taking 
+--          our current "valid move" logic and splitting it (current code would 
+--          be check(mate) only, with a new approach for setting up a player's 
+--          available moves). the new logic would be:
+--
+--           - identify all spaces threatened by an enemy piece, and disallow 
+--             moving the king there. simple.
+--
+--           - for each piece with a contiguous direction of movement (i.e. all 
+--             enemy rooks, bishops, and queens): if only one king-allied piece 
+--             blocks any of these enemy pieces from the king, then flag that 
+--             king-allied piece and not being movable. (essentially, this 
+--             requires a modified variant on valid-move logic: for each of the 
+--             enemy's directions of movement, instead of stopping iteration at 
+--             the first blocker, we remember the first blocker found, the 
+--             number of blockers up to the enemy king, and whether the king is 
+--             even in that direction relative to the enemy piece. if there is 
+--             only one blocker and it is indeed interposed between the enemy 
+--             and the king, then we flag that blocker as not being safely 
+--             movable.)
+--          
+--          probably would consume too much space.
 --
 -- TODO: draw if a player has no legal moves but is not in check
 --
 -- TODO: pawn promotion
 --
 -- TODO: if a team has no players, skip its turn, optionally with a short delay 
---       and a UI message
+--       and a UI message (clearly indicate the code; we only want this for 
+--       testing, and we may try to replace it with letting a single player 
+--       control both sides of the board)
 --
 -- TODO: short delay between checkmate and victory
 --
---        - Code is written but it doesn't work. What debug logs did we get, again?
+--        - WROTE A FIX BUT HAVEN'T TESTED IT YET. Hopefully the round won't end 
+--          immediately upon checkmate anymore.
+--
+--        - If the fix works, we still need to set a time limit on the winners 
+--          killing the enemy king.
+--
+-- TODO: Write code to end the round when the round timer runs out. If a checkmate  
+--       occurs and we're waiting on the winner to kill the king, force the round 
+--       timer to match the time limit on killing the king. (We award points as 
+--       soon as the checkmate/victory is detected, so after that it's just a 
+--       matter of deciding when to end the round.)
 --
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
