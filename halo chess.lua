@@ -25,7 +25,7 @@
 --
 -- TODO: short delay between checkmate and victory
 --
---        - DONE. NEEDS TESTING.
+--        - Code is written but it doesn't work. What debug logs did we get, again?
 --
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
@@ -37,11 +37,13 @@
 --
 -- DONE:
 --
---  - Piece selection
+--  - Piece selection (and the ability to re-select)
 --
 --  - Target square selection
 --
 --  - Check and checkmate
+--
+--  - Victory conditions: checkmate; killing king
 --
 --  - Edge-case: turn clock runs out after you've selected a piece and gained 
 --    control
@@ -135,10 +137,23 @@ alias temp_plr_00     = global.player[1]
 alias temp_tem_00     = global.team[3]
 alias turn_clock      = global.timer[0]
 declare turn_clock = opt_turn_clock
+--
+declare temp_int_00 with network priority low
+declare temp_int_01 with network priority low
+declare temp_int_02 with network priority low
+declare temp_int_03 with network priority low
+declare temp_int_04 with network priority low
+declare temp_obj_00 with network priority low
+declare temp_obj_01 with network priority low
+declare temp_obj_02 with network priority low
+declare temp_obj_03 with network priority low
+declare temp_obj_04 with network priority low
+declare temp_obj_05 with network priority low
+declare temp_plr_00 with network priority low
+declare temp_tem_00 with network priority low
 
 alias announced_game_start = player.number[0]
 alias target_space         = player.object[0] -- piece the player is about to select (pending their timer)
-alias override_biped_create_location = player.object[1]
 alias selection_timer = player.timer[0]
 declare player.selection_timer = 2
 alias announce_start_timer = player.timer[1]
@@ -285,12 +300,6 @@ if board_created == 0 then -- generate board
    working.set_shape(box, 140, 140, 40, 20)
    board_center.piece_deselect_boundary = working
    --
-   working = board_center.place_at_me(respawn_point, none, never_garbage_collect, 0, 0, 0, none) -- just in case
-   working.attach_to(board_center, 0, 0, 0, relative)
-   working.detach()
-   working.copy_rotation_from(board_center, true)
-   working.team = neutral_team
-   --
    current = board_center.place_at_me(block_1x1_flat, "board_space", never_garbage_collect, 0, 0, 0, none)
    current.attach_to(board_center, first_cell_x_offset, first_cell_y_offset, first_cell_z_offset, relative)
    current.detach()
@@ -364,11 +373,11 @@ for each object with label "board_space_extra" do -- generate missing bipeds
    --
    cell = extra.marker
    extra.biped.set_waypoint_visibility(allies)
-   if cell.piece_type == piece_type_queen
-   or cell.piece_type == piece_type_king
-   then
-      extra.biped.set_waypoint_visibility(everyone)
-   end
+   --if cell.piece_type == piece_type_queen
+   --or cell.piece_type == piece_type_king
+   --then
+   --   extra.biped.set_waypoint_visibility(everyone)
+   --end
    --
    if winning_faction == faction_none then
       alias biped = temp_obj_01
@@ -511,10 +520,6 @@ for each player do -- force players into Monitor bipeds
          created = board_center.place_at_me(monitor, none, none, 0, 0, 0, none)
          created.attach_to(board_center, 0, 0, 20, relative)
          created.detach()
-         if current_player.override_biped_create_location != no_object then
-            biped.delete()
-            biped = current_player.override_biped_create_location
-         end
          if biped != no_object and not biped.is_out_of_bounds() then
             created.attach_to(biped, 0, 0, 6, relative)
             created.detach()
@@ -525,8 +530,8 @@ for each player do -- force players into Monitor bipeds
       end
    end
    if current_player.biped.is_of_type(monitor) then -- do what we can to stop Monitors from picking stuff up
-      created.remove_weapon(secondary, true)
-      created.remove_weapon(primary,   true)
+      current_player.biped.remove_weapon(secondary, true)
+      current_player.biped.remove_weapon(primary,   true)
       current_player.frag_grenades   = 0
       current_player.plasma_grenades = 0
    end
@@ -815,9 +820,10 @@ function is_king_in_check()
    king_in_check     = 0
    if king != no_object then
       _reset_board_for_move_checks()
+      king_threat = no_object
       for each object with label "board_space" do
          if current_object.piece_type != piece_type_none and current_object.owner != king.owner then
-            global.object[0] = current_object -- parameter for next function call
+            temp_obj_00 = current_object -- parameter for next function call
             check_valid_move()
             if king.is_valid_move == 1 then
                king.is_valid_move = 0
@@ -901,7 +907,7 @@ function is_king_in_check()
                      and current_object.piece_type != piece_type_king
                      and current_object.owner == king.owner
                      then
-                        global.object[0] = current_object -- parameter for next function call
+                        temp_obj_00 = current_object -- parameter for next function call
                         check_valid_move()
                      end
                   end
@@ -934,7 +940,7 @@ function is_king_in_check()
                               end
                            end
                         end
-                        global.object[0] = king_threat -- parameter for next function call
+                        temp_obj_00 = king_threat -- parameter for next function call
                         check_valid_move()
                         for each object with label "board_space" do
                            if current_object.piece_type == piece_type_dummy then
@@ -997,6 +1003,22 @@ for each player do game.show_message_to(current_player, none, "DEBUG: Losing kin
    end
 end
 
+function quick_force_active_player_to_monitor()
+   alias working = temp_obj_00
+   alias ctrlbip = temp_obj_01
+   ctrlbip = active_player.biped
+   working = ctrlbip.place_at_me(monitor, none, none, 0, 0, 0, none)
+   working.copy_rotation_from(ctrlbip, true)
+   working.attach_to(ctrlbip, 0, 0, 6, relative)
+   working.detach()
+   active_player.set_biped(working)
+   ctrlbip.delete()
+   --if working.is_out_of_bounds() then
+   --   working.copy_rotation_from(board_center, true)
+   --   working.attach_to(board_center, 0, 0, 20, relative)
+   --   working.detach()
+   --end
+end
 function end_turn()
    if winning_faction == faction_none then
       alias previous_faction = temp_int_00
@@ -1083,12 +1105,6 @@ function commit_move()
    selected_piece.piece_type = piece_type_none
    selected_piece.owner      = faction_none
    selected_piece.en_passant_vulnerable = 0
-   if target_biped != no_object then
-      active_player.override_biped_create_location = target_biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-      active_player.override_biped_create_location.attach_to(target_biped, 0, 0, 0, relative)
-      active_player.override_biped_create_location.detach()
-      active_player.override_biped_create_location.copy_rotation_from(target_biped, true)
-   end
    target_biped.delete()
    --
    end_turn()
@@ -1199,8 +1215,9 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          if active_player.selection_timer.is_zero() then
             alias cell = temp_obj_00
             --
+            quick_force_active_player_to_monitor()
             temp_obj_00 = active_player.target_space
-            temp_obj_01 = extra.biped
+            temp_obj_01 = no_object
             commit_move()
          end
       end
@@ -1210,11 +1227,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          -- the piece so they can change their choice.
          --
          selected_piece = no_object
-         active_player.override_biped_create_location = active_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-         active_player.override_biped_create_location.attach_to(active_player.biped, 0, 0, 0, relative)
-         active_player.override_biped_create_location.detach()
-         active_player.override_biped_create_location.copy_rotation_from(active_player.biped, true)
-         active_player.biped.delete()
+         quick_force_active_player_to_monitor()
       end
    end
    if turn_clock.is_zero() and opt_turn_clock > 0 then
@@ -1231,23 +1244,26 @@ on object death: do
       extra = killed_object.extra
       killed_object.delete()
       --
-      if winning_faction != faction_none and cell.piece_type == piece_type_king then
+      if winning_faction != faction_none and cell.piece_type == piece_type_king then -- end-of-match victory
          if cell.owner != winning_faction then
 for each player do game.show_message_to(current_player, none, "DEBUG: Victory process: king biped killed. Ending round.") end
             game.end_round()
          end
       end
       --
-      if  killer_object.is_script_created == 1
-      and killer_object.marker != no_object
-      and selected_piece != no_object
-      then -- active player tried to capture this square
-         if  killed_object.owner != selected_piece.owner
-         and cell.is_valid_move == 1
-         then -- active player is allowed to capture this square
+      if killer_object.is_script_created == 1 and selected_piece != no_object then -- active player tried to capture this square
+         --
+         -- The active player tried to capture this space.
+         --
+         if cell.owner != selected_piece.owner and cell.is_valid_move == 1 then
+            --
+            -- The active player is allowed to capture this square.
+            --
+            temp_obj_02 = cell -- temp_obj_00 is used by next call
+            quick_force_active_player_to_monitor()
             killer_object.delete()
             if winning_faction == faction_none then
-               temp_obj_00 = cell
+               temp_obj_00 = temp_obj_02
                temp_obj_01 = no_object
                commit_move()
                draw_turn_count = 0 -- reset the 75-rule counter if a piece was killed
