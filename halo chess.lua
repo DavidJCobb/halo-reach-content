@@ -17,6 +17,11 @@
 --       implementation and it worked there, but we should still find a way to 
 --       test it in-game)
 --
+-- TODO: disallow moving your own king into check, or revert such moves when they 
+--       are made
+--
+-- TODO: draw if a player has no legal moves but is not in check
+--
 -- TODO: pawn promotion
 --
 -- TODO: if a team has no players, skip its turn, optionally with a short delay 
@@ -78,6 +83,7 @@ alias piece_type_bishop = 3
 alias piece_type_rook   = 4
 alias piece_type_queen  = 5
 alias piece_type_king   = 6
+alias piece_type_dummy  = -1
 
 -- General state:
 alias is_script_created = object.number[5]
@@ -103,7 +109,7 @@ alias space_above   = object.object[2]
 alias space_below   = object.object[3]
 declare object.piece_type    = piece_type_none
 declare object.is_valid_move = 0
-declare object.is_king_move  = 0
+declare object.threatened_by = 0
 declare object.owner         = faction_none
 --
 -- Cell-extra data:
@@ -155,6 +161,45 @@ alias ui_in_check   = script_widget[1]
 alias ui_bad_move   = script_widget[2]
 alias ui_turn_clock = script_widget[3]
 alias ui_endgame    = script_widget[3] -- multi-purpose widget
+
+--
+-- SCRIPT FLOW:
+--
+--  - Generate board
+--  - Generate bipeds for spaces that are missing them
+--  - Force players into Monitor bipeds
+--  - Update UI during gameplay
+--  - Handle picking a piece or picking a move
+--     - Handle moving a piece to an unoccupied space
+--        - If the player is double-moving a pawn: flag as vulnerable to capturing en passant
+--        - If the player is killing a king: begin victory process
+--        - End turn
+--           = Skip this processing if we are in the victory process.
+--           - Switch to next player
+--           - Clear en passant vulnerability from new player's pawns
+--           - Check whether new player is in check or checkmate
+--              - If checkmate, begin the victory process.
+--           - Manage 75-turn draw rule
+--  - Handle piece death, if it occurs
+--     - Handle moving a piece to an enemy-occupied space
+--        - If the player is double-moving a pawn: flag as vulnerable to capturing en passant
+--        - If the player is killing a king: begin victory process
+--        - End turn
+--           = Skip this processing if we are in the victory process.
+--           - Switch to next player
+--           - Clear en passant vulnerability from new player's pawns
+--           - Check whether new player is in check or checkmate
+--              - If checkmate, begin the victory process.
+--           - Manage 75-turn draw rule
+--     - If victory process is active, handle death of the loser's king
+--  - Victory process, if active
+--     - Manage piece (in)vulnerability
+--     - Manage UI
+--  - Draw checks
+--     - 75-turn rule
+--     - Insufficient materials 1
+--     - Insufficient materials 2
+--
 
 on init: do
    team_black = team[0]
@@ -431,6 +476,7 @@ for each object with label "board_space_extra" do -- generate missing bipeds
             extra.biped  = biped
             biped.extra  = extra
             biped.marker = cell
+for each player do game.show_message_to(current_player, none, "DEBUG: Created biped for space %nx%n.", cell.coord_x, cell.coord_y) end
          end
       end
    end
@@ -486,12 +532,6 @@ function check_valid_move()
    -- this function. In the latter case, you'd run that loop once, and then call 
    -- this function on all of the attacker's pieces; then, check whether the 
    -- defender's king can move to any square for which that variable is still 0.
-   --
-   -- In order to check whether the king is checkmated by a pawn, you will need 
-   -- to set (object.is_king_move) on all of the spaces that the king can move 
-   -- to before calling this function. If you are running checks for any other 
-   -- reason (e.g. "is the king currently in check" or "can the player move 
-   -- their piece here"), then you must set that variable to 0.
    --
    -- Note, when establishing a player's legal moves, that if a player has no 
    -- legal moves but is not in check, then the game ends in a draw; if they 
@@ -647,7 +687,7 @@ function check_valid_move()
          y_diff -= current_object.coord_y
          x_diff *= y_diff
          if x_diff == 2 or x_diff == -2 then -- (2 * 1) or (-2 * 1) or (2 * -1) or (-2 * -1)
-            current_object.is_threatened_by += 1
+            current_object.threatened_by += 1
             if current_object.piece_type == piece_type_none or current_object.owner != current_piece.owner then
                current_object.is_valid_move = 1
             end
@@ -656,7 +696,7 @@ function check_valid_move()
    end
    if current_piece.piece_type == piece_type_king then
       function _set_if() -- if we inlined this, each copy would be a separate trigger. since they're all identical, let's just make it a function so we're not compiling tons of duplicate data
-         target_space.is_threatened_by = 1
+         target_space.threatened_by = 1
          if target_space.piece_type == piece_type_none or target_space.owner != current_piece.owner then
             target_space.is_valid_move = 1
          end
@@ -692,9 +732,9 @@ function check_valid_move()
          double_from = 1
       end
       if single_move.piece_type == piece_type_none then
-         single_move.is_valid_move = true
+         single_move.is_valid_move = 1
          if current_piece.coord_y == double_from and double_move.piece_type == piece_type_none then
-            double_move.is_valid_move = true
+            double_move.is_valid_move = 1
          end
       end
       --
@@ -762,26 +802,26 @@ function is_king_in_check()
          function _set_if()
             if target_space.threatened_by == 0 then
                if target_space.piece_type == piece_type_none or target_space.owner != king.owner then
-                  safe_space = target_space;
+                  safe_space = target_space
                end
             end
          end
-         target_space = king.space_left;
-         _set_if();
+         target_space = king.space_left
+         _set_if()
          target_space = target_space.space_above -- upper-left
-         _set_if();
-         target_space = king.space_right;
-         _set_if();
+         _set_if()
+         target_space = king.space_right
+         _set_if()
          target_space = target_space.space_below -- lower-right
-         _set_if();
-         target_space = king.space_above;
-         _set_if();
+         _set_if()
+         target_space = king.space_above
+         _set_if()
          target_space = target_space.space_right -- upper-right
-         _set_if();
-         target_space = king.space_below;
-         _set_if();
+         _set_if()
+         target_space = king.space_below
+         _set_if()
          target_space = target_space.space_left -- lower-left
-         _set_if();
+         _set_if()
          if safe_space == no_object then
             --
             -- The king cannot move to an unoccupied space or kill an enemy without 
@@ -809,11 +849,11 @@ function is_king_in_check()
                   end
                   if side.owner == king_threat.owner or side.piece_type == piece_type_none then
                      side = king_threat.space_left
-                     if side and side.owner == king.owner and side.piece_type == piece_type_pawn then
+                     if side.owner == king.owner and side.piece_type == piece_type_pawn then
                         can_escape = 1
                      end
                      side = king_threat.space_right
-                     if side and side.owner == king.owner and side.piece_type == piece_type_pawn then
+                     if side.owner == king.owner and side.piece_type == piece_type_pawn then
                         can_escape = 1
                      end
                   end
@@ -869,7 +909,7 @@ function is_king_in_check()
                               current_object.piece_type = piece_type_none
                            end
                         end
-                        if king.is_valid_move then
+                        if king.is_valid_move == 1 then
                            --
                            -- The king's allies can't block this enemy from threatening the 
                            -- king.
@@ -909,6 +949,7 @@ function begin_victory()
       end
       winning_faction = temp_int_00
       team_to_win.score += 1
+for each player do game.show_message_to(active_player, none, "DEBUG: Beginning victory process for %s.", team_to_win) end
       --
       alias losing_king_alive = temp_int_00
       losing_king_alive = 0
@@ -918,13 +959,14 @@ function begin_victory()
          end
       end
       if losing_king_alive == 0 then
+for each player do game.show_message_to(current_player, none, "DEBUG: Losing king is dead; victory process is ending round.") end
          game.end_round()
       end
    end
 end
 
 function end_turn()
-   if faction_to_win == faction_none then
+   if winning_faction == faction_none then
       alias previous_faction = temp_int_00
       --
       previous_faction = active_faction
@@ -964,6 +1006,7 @@ function end_turn()
       if temp_int_01 != 0 then -- active faction is in check!
          turn_flags |= turn_flag_in_check
          if temp_int_00 != 0 then -- active faction is in checkmate!
+for each player do game.show_message_to(current_player, none, "DEBUG: Victory via checkmate!") end
             temp_int_00 = previous_faction
             begin_victory() -- victory condition: checkmate
          end
@@ -994,6 +1037,7 @@ function commit_move()
       end
    end
    if target_space.piece_type == piece_type_king then -- king was killed
+for each player do game.show_message_to(current_player, none, "DEBUG: Victory via killing the king!") end
       temp_int_00 = selected_piece.owner
       begin_victory() -- victory condition: killed king
    end
@@ -1080,7 +1124,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
             --
             for each object with label "board_space" do
                current_object.is_valid_move = 0
-               current_object.is_king_move  = 0
+               current_object.threatened_by = 0
             end
             global.object[0] = selected_piece
             check_valid_move()
@@ -1162,6 +1206,7 @@ on object death: do
       --
       if winning_faction != faction_none and cell.piece_type == piece_type_king then
          if cell.owner != winning_faction then
+for each player do game.show_message_to(current_player, none, "DEBUG: Victory process: king biped killed. Ending round.") end
             game.end_round()
          end
       end
@@ -1203,12 +1248,14 @@ if winning_faction != faction_none then
       current_object.biped.set_invincibility(0)
       if current_object != no_object and current_object.owner == winning_faction then
          winning_biped_count += 1
-         if not current_object.out_of_bounds() then
+         if not current_object.is_out_of_bounds() then
             current_object.biped.set_invincibility(1)
          end
       end
    end
    if winning_biped_count == 0 then -- the winners lost all bipeds and can't kill the king
+for each player do game.show_message_to(current_player, none, "DEBUG: No winning bipeds; ending round.") end
+for each player do game.show_message_to(current_player, none, "DEBUG: Winning faction: %n (none: %n)", winning_faction, faction_none) end
       game.end_round()
    end
    ui_endgame.set_text("%s won!", team_black)
@@ -1218,7 +1265,7 @@ if winning_faction != faction_none then
    do_endgame_ui_visibility()
 end
 
-if winning_faction == faction_none -- check for draw conditions
+if winning_faction == faction_none then -- check for draw conditions
    if opt_draw_rule > 0 and draw_turn_count >= opt_draw_rule then
       --
       -- If 75 moves (by default) pass without there being pawns on the board, and 
@@ -1227,6 +1274,7 @@ if winning_faction == faction_none -- check for draw conditions
       --
       ui_endgame.set_text("Draw! (%n turns passed with no pawns and no captures.)", draw_turn_count)
       do_endgame_ui_visibility()
+for each player do game.show_message_to(current_player, none, "DEBUG: Draw (turn limit).") end
       game.end_round()
    end
    --
@@ -1254,6 +1302,7 @@ if winning_faction == faction_none -- check for draw conditions
       if knights_and_bishops == 1 then
          ui_endgame.set_text("Draw! (Insufficient material.)")
          do_endgame_ui_visibility()
+for each player do game.show_message_to(current_player, none, "DEBUG: Draw (insufficient materials 1).") end
          game.end_round()
       end
       --
@@ -1268,7 +1317,7 @@ if winning_faction == faction_none -- check for draw conditions
       bishops_black = 0
       bishops_white = 0
       b_align_black = 0
-      b_align_white = 1
+      b_align_white = 0
       for each object with label "board_space" do
          if current_object.piece_type == piece_type_bishop then
             if current_object.owner == faction_black then
@@ -1288,6 +1337,7 @@ if winning_faction == faction_none -- check for draw conditions
       if bishops_black == 1 and bishops_white == 1 and b_align_black == b_align_white then
          ui_endgame.set_text("Draw! (Insufficient material.)")
          do_endgame_ui_visibility()
+for each player do game.show_message_to(current_player, none, "DEBUG: Draw (insufficient materials 2).") end
          game.end_round()
       end
    end
