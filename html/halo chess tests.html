@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+   <head>
+      <style>
+body{font-family:calibri,verdana,sans-serif}
+
+body{display:flex;flex-flow:row nowrap}
+   .col{flex:0 0 auto}
+   .col:first-child{flex:1 0 auto}
+      
+#chessboard{display:flex;flex-flow:row wrap;width:16rem}
+   #chessboard .space{box-sizing:border-box;flex:0 0 auto;width:2rem;height:2rem}
+   #chessboard .space{background:#DDD;text-align:center}
+   #chessboard .space[dark]{background:#666}
+      #chessboard .space::before{font-size:1.5em;line-height:2rem}
+      #chessboard .space[data-piece-type="1"]::before{content:"P"}
+      #chessboard .space[data-piece-type="2"]::before{content:"k";text-transform:lowercase} /*text-transform needed because Edge sucks*/
+      #chessboard .space[data-piece-type="3"]::before{content:"B"}
+      #chessboard .space[data-piece-type="4"]::before{content:"R"}
+      #chessboard .space[data-piece-type="5"]::before{content:"Q"}
+      #chessboard .space[data-piece-type="6"]::before{content:"K";text-transform:uppercase}
+      #chessboard .space[data-owner="1"]::before{color:#FFF}
+      #chessboard .space[data-owner="2"]::before{color:#111}
+      #chessboard .space::before{
+         text-shadow: -1px -1px 0 #000,  
+                       1px -1px 0 #000,
+                      -1px  1px 0 #000,
+                       1px  1px 0 #000,
+                       0px  1px 0 #000,
+                       0px -1px 0 #000,
+                       1px  0px 0 #000,
+                      -1px  0px 0 #000;
+      }
+
+#palette{
+   display:flex;flex-flow:row nowrap;
+   padding:.25em .5em;
+   border:1px solid #FFF;
+   border-right-color:#FFF;
+   border-left-color:#AAA;
+   border-bottom-color:#FFF;
+   border-top-color:#AAA;
+   background:#FAFAFA;
+}
+   #palette ul{flex:0 0 auto;list-style:none;padding:1em;margin:0}
+      #palette li{border:1px solid #886;background:#EEC;padding:.25em .5em;text-align:center;margin-bottom:.25em}
+      #palette li{user-select:none}
+      #palette li.selected{border:1px solid #68A;background:#DEF}
+      </style>
+   </head>
+   <body>
+      <div class="col">
+         <div id="chessboard">
+         </div>
+      </div>
+      <div class="col">
+         <div id="palette">
+            <ul class="type">
+               <li data-value="0" class="selected">None</li>
+               <li data-value="1">Pawn</li>
+               <li data-value="2">Knight</li>
+               <li data-value="3">Bishop</li>
+               <li data-value="4">Rook</li>
+               <li data-value="5">Queen</li>
+               <li data-value="6">King</li>
+            </ul>
+            <ul class="faction">
+               <li data-value="1" class="selected">White</li>
+               <li data-value="2">Black</li>
+            </ul>
+         </div>
+      </div>
+      <script>
+
+/*
+   TODO:
+   
+   Write code to test available piece moves, same as the Megalo script
+*/
+
+const faction_none  = 0;
+const faction_white = 1; // south
+const faction_black = 2; // north
+
+const piece_type_none   = 0;
+const piece_type_pawn   = 1;
+const piece_type_knight = 2;
+const piece_type_bishop = 3;
+const piece_type_rook   = 4;
+const piece_type_queen  = 5;
+const piece_type_king   = 6;
+      
+class Space {
+   constructor() {
+      this.space_above = null; // Space
+      this.space_below = null; // Space
+      this.space_left  = null; // Space
+      this.space_right = null; // Space
+      this.coord_x = 0;
+      this.coord_y = 0;
+      this.piece_type = piece_type_none;
+      this.owner = faction_none;
+      //
+      this.is_valid_move = false;
+      this.is_king_move  = false;
+   }
+};
+
+let _spaces = [];
+function forEachSpaceDo(functor) {
+   for(let i = 0; i < _spaces.length; ++i)
+      (functor)(_spaces[i]);
+}
+
+document.getElementById("chessboard").addEventListener("click", function(e) {
+   let node = e.target;
+   if (!node.classList.contains("space"))
+      return true;
+   let type = document.querySelector("#palette .type .selected");
+   let fact = document.querySelector("#palette .faction .selected");
+   if (type)
+      type = +type.getAttribute("data-value");
+   if (!type) {
+      type = piece_type_none;
+      fact = faction_none;
+   } else {
+      if (fact)
+         fact = +fact.getAttribute("data-value");
+      if (!fact)
+         fact = faction_white;
+   }
+   //
+   let x = +node.getAttribute("data-x");
+   let y = +node.getAttribute("data-x");
+   let data = _spaces[y * 8 + x];
+   data.piece_type = type;
+   data.owner      = fact;
+   //
+   node.setAttribute("data-piece-type", data.piece_type);
+   node.setAttribute("data-owner",      data.owner);
+});
+document.getElementById("palette").addEventListener("click", function(e) {
+   let node = e.target.closest("li");
+   if (!node)
+      return true;
+   let list = node.parentNode;
+   list.querySelectorAll(".selected").forEach(function(item) {
+      if (item == node)
+         return true;
+      item.classList.remove("selected");
+   });
+   node.classList.add("selected");
+});
+
+{  // build chessboard
+   let node = document.getElementById("chessboard");
+   for(let y = 0; y < 8; ++y) {
+      for(let x = 0; x < 8; ++x) {
+         let space = new Space();
+         space.coord_x = x;
+         space.coord_y = y;
+         _spaces.push(space);
+         //
+         let div = document.createElement("div");
+         div.className = "space";
+         div.setAttribute("data-x", x);
+         div.setAttribute("data-y", y);
+         if (x % 2 != y % 2)
+            div.setAttribute("dark", "dark");
+         node.appendChild(div);
+      }
+   }
+}
+forEachSpaceDo(function(current_object) { // populate initial pieces
+   current_object.owner = faction_none;
+   if (current_object.coord_y == 1 || current_object.coord_y == 6) {
+      current_object.piece_type = piece_type_pawn;
+   }
+   if (current_object.coord_y == 0 || current_object.coord_y == 7) {
+      if (current_object.coord_x == 0 || current_object.coord_x == 7) {
+         current_object.piece_type = piece_type_rook;
+      }
+      if (current_object.coord_x == 1 || current_object.coord_x == 6) {
+         current_object.piece_type = piece_type_knight;
+      }
+      if (current_object.coord_x == 2 || current_object.coord_x == 5) {
+         current_object.piece_type = piece_type_bishop;
+      }
+      if (current_object.coord_x == 3) {
+         current_object.piece_type = piece_type_queen;
+      }
+      if (current_object.coord_x == 4) {
+         current_object.piece_type = piece_type_king;
+      }
+   }
+   //
+   if (current_object.piece_type != piece_type_none) {
+      if (current_object.coord_y <= 1) {
+         current_object.owner = faction_black;
+      }
+      if (current_object.coord_y >= 6) {
+         current_object.owner = faction_white;
+      }
+   }
+});
+
+function redrawChessboard() {
+   let board = document.getElementById("chessboard");
+   for(let i = 0; i < 64; ++i) {
+      let node = board.children[i];
+      let x    = +node.getAttribute("data-x");
+      let y    = +node.getAttribute("data-y");
+      let data = _spaces[y * 8 + x];
+      node.setAttribute("data-piece-type", data.piece_type);
+      node.setAttribute("data-owner",      data.owner);
+   }
+}
+redrawChessboard();
+
+
+      </script>
+   </body>
+</html>
