@@ -128,10 +128,7 @@ class Space {
       this.is_valid_move = false;
       this.is_king_move  = false;
       this.threatened_by = 0;
-      //
-      this.threat_x = 0;
-      this.threat_y = 0;
-      this.threat_type = piece_type_none;
+      this.en_passant_vulnerable = false; // pawns only; must be set on the turn the pawn double-moves, and cleared on its owner's next turn
    }
    describe() {
       if (this.piece_type == piece_type_none)
@@ -596,6 +593,29 @@ function checkmateTest(faction) {
             //
             alert(`Checkmate: king is threatened by ${king.threatened_by} enemies and cannot move.`);
             return;
+         }
+         if (king_threat.en_passant_vulnerable) {
+            //
+            // The king is under threat by a pawn. Can another pawn capture it en 
+            // passant?
+            //
+            let side;
+            side = king_threat.space_above;
+            if (king_threat.owner == faction_white) {
+               side = king_threat.space_below;
+            }
+            if (side.owner == king_threat.owner || side.piece_type == piece_type_none) {
+               let side = king_threat.space_left;
+               if (side && side.owner == king.owner && side.piece_type == piece_type_pawn) {
+                  alert("Check! Can be resolved by capturing the hostile pawn en passant.");
+                  return;
+               }
+               side = king_threat.space_right;
+               if (side && side.owner == king.owner && side.piece_type == piece_type_pawn) {
+                  alert("Check! Can be resolved by capturing the hostile pawn en passant.");
+                  return;
+               }
+            }
          }
          //
          // If the piece threatening the king can be killed by one of the king's 
