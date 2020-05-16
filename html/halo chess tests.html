@@ -108,6 +108,7 @@ const piece_type_bishop = 3;
 const piece_type_rook   = 4;
 const piece_type_queen  = 5;
 const piece_type_king   = 6;
+const piece_type_dummy  = 7; // for checkmate testing
 
 const no_object = void 0;
 const no_player = void 0;
@@ -124,10 +125,33 @@ class Space {
       this.piece_type = piece_type_none;
       this.owner = faction_none;
       //
-      this.is_valid_move  = false;
-      this.is_king_move   = false;
-      this.can_be_avenged = false; // if this piece is captured, can one of its allies avenge it? (needed for checkmate testing)
-      this.threatened_by  = 0;
+      this.is_valid_move = false;
+      this.is_king_move  = false;
+      this.threatened_by = 0;
+      //
+      this.threat_x = 0;
+      this.threat_y = 0;
+      this.threat_type = piece_type_none;
+   }
+   describe() {
+      if (this.piece_type == piece_type_none)
+         return "empty space";
+      let team = "unowned";
+      let type = "unknown";
+      switch (this.owner) {
+         case faction_black: team = "black"; break;
+         case faction_white: team = "white"; break;
+      }
+      switch (this.piece_type) {
+         case piece_type_pawn:   type = "pawn"; break;
+         case piece_type_knight: type = "knight"; break;
+         case piece_type_bishop: type = "bishop"; break;
+         case piece_type_rook:   type = "rook"; break;
+         case piece_type_queen:  type = "queen"; break;
+         case piece_type_king:   type = "king"; break;
+         case piece_type_dummy:  type = "dummy"; break;
+      }
+      return `${team} ${type}`;
    }
 };
 
@@ -282,7 +306,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
-               upperleft()
+               if (target_space.piece_type == piece_type_none) {
+                  upperleft();
+               }
             }
          }
       })();
@@ -295,7 +321,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
-               upperright()
+               if (target_space.piece_type == piece_type_none) {
+                  upperright();
+               }
             }
          }
       })();
@@ -308,7 +336,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
-               lowerleft()
+               if (target_space.piece_type == piece_type_none) {
+                  lowerleft();
+               }
             }
          }
       })();
@@ -321,7 +351,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = true;
-               lowerright()
+               if (target_space.piece_type == piece_type_none) {
+                  lowerright();
+               }
             }
          }
       })();
@@ -334,7 +366,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
-               left();
+               if (target_space.piece_type == piece_type_none) {
+                  left();
+               }
             }
          }
       })();
@@ -345,7 +379,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
-               right();
+               if (target_space.piece_type == piece_type_none) {
+                  right();
+               }
             }
          }
       })();
@@ -356,7 +392,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
-               up();
+               if (target_space.piece_type == piece_type_none) {
+                  up();
+               }
             }
          }
       })();
@@ -367,7 +405,9 @@ function checkValidMoves(current_piece) {
             target_space.threatened_by += 1;
             if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
                target_space.is_valid_move = 1;
-               down();
+               if (target_space.piece_type == piece_type_none) {
+                  down();
+               }
             }
          }
       })();
@@ -432,14 +472,6 @@ function checkValidMoves(current_piece) {
          let diagonal = temporary_obj;
          let passant  = temporary_ob2;
          if (!diagonal) return; // JS-only
-         function _flag_diagonal() {
-            if (diagonal.owner == current_piece.owner) {
-               diagonal.can_be_avenged = true;
-            }
-            if (diagonal.owner != current_piece.owner) {
-               diagonal.is_valid_move = 1;
-            }
-         }
          passant = diagonal.space_below;
          if (current_piece.owner == faction_black) {
             passant = diagonal.space_above;
@@ -465,9 +497,9 @@ function checkValidMoves(current_piece) {
 
 function showMovesFor(faction) {
    forEachSpaceDo(function(current_object) {
-      current_object.is_king_move   = false;
-      current_object.is_valid_move  = false;
-      current_object.can_be_avenged = false;
+      current_object.is_king_move  = false;
+      current_object.is_valid_move = false;
+      current_object.threatened_by = 0;
    });
    forEachSpaceDo(function(current_object) {
       if (current_object.piece_type != piece_type_none && current_object.owner == faction) {
@@ -482,10 +514,6 @@ function showMovesFor(faction) {
          node.classList.add("valid-move");
       else
          node.classList.remove("valid-move");
-      if (_spaces[i].can_be_avenged)
-         node.classList.add("can-be-avenged");
-      else
-         node.classList.remove("can-be-avenged");
    }
 }
 document.getElementById("test-moves-white").addEventListener("click", function(e) {
@@ -496,20 +524,26 @@ document.getElementById("test-moves-black").addEventListener("click", function(e
 });
 
 function checkmateTest(faction) {
+   let king        = no_object;
+   let king_threat = no_object;
    forEachSpaceDo(function(current_object) {
-      current_object.is_king_move   = false;
-      current_object.is_valid_move  = false;
-      current_object.can_be_avenged = false;
-      current_object.threatened_by  = 0;
+      if (current_object.piece_type == piece_type_king && current_object.owner == faction) {
+         king = current_object;
+      }
+   });
+   //
+   forEachSpaceDo(function(current_object) {
+      current_object.is_king_move  = false;
+      current_object.is_valid_move = false;
+      current_object.threatened_by = 0;
    });
    forEachSpaceDo(function(current_object) {
       if (current_object.piece_type != piece_type_none && current_object.owner != faction) {
          checkValidMoves(current_object);
-      }
-   });
-   forEachSpaceDo(function(current_object) {
-      if (current_object.piece_type == piece_type_king && current_object.owner == faction) {
-         king = current_object;
+         if (king.is_valid_move) {
+            king.is_valid_move = false;
+            king_threat = current_object;
+         }
       }
    });
    //
@@ -523,7 +557,7 @@ function checkmateTest(faction) {
          node.removeAttribute("data-threatened-by");
    }
    //
-   if (king.is_valid_move) {
+   if (king.threatened_by > 0) {
       let safe_space   = no_object;
       let target_space = no_object;
       function _set_if() {
@@ -564,14 +598,61 @@ function checkmateTest(faction) {
             return;
          }
          //
-         // TODO: If the piece threatening the king can be killed by one of the king's 
+         // If the piece threatening the king can be killed by one of the king's 
          // allies, then this is not checkmate.
          //
-         // TODO: If the piece threatening the king is not a knight, then check whether 
-         // one of the king's allies can interpose itself between the king and the enemy.
-         //
-         // If neither of the above two conditions are met, then the king is in checkmate.
-         //
+         forEachSpaceDo(function(current_object) {
+            current_object.is_king_move  = false;
+            current_object.is_valid_move = false;
+            current_object.threatened_by = 0;
+         });
+         forEachSpaceDo(function(current_object) {
+            if (current_object.owner == king.owner && current_object.piece_type != piece_type_king) {
+               checkValidMoves(current_object);
+            }
+         });
+         if (king_threat.is_valid_move == 0) { // TODO: this won't catch the possibility of killing (king_threat) with a capture en passant
+            //
+            // A kill is not possible. Can we move a piece between it and the 
+            // king instead?
+            //
+            if (king_threat.piece_type == piece_type_knight) {
+               //
+               // You can't physically block a knight.
+               //
+               alert("Checkmate! The king is under threat from " + king_threat.describe() + ".");
+               return;
+            }
+            //
+            // We already identified every space that the king's allies can move to. 
+            // Let's take the unoccupied spaces that they can move to, and change the 
+            // piece type to a non-none dummy value. Then, we'll identify which spaces 
+            // the king-threatening piece can still move to. If it can't reach the 
+            // king, then the king's allies can indeed block it.
+            //
+            forEachSpaceDo(function(current_object) {
+               current_object.threatened_by = 0;
+               if (current_object.is_valid_move) {
+                  current_object.is_valid_move = false;
+                  if (current_object.piece_type == piece_type_none) {
+                     current_object.piece_type = piece_type_dummy;
+                  }
+               }
+            });
+            checkValidMoves(king_threat);
+            forEachSpaceDo(function(current_object) {
+               if (current_object.piece_type == piece_type_dummy) { // don't forget to change this back!!
+                  current_object.piece_type = piece_type_none;
+               }
+            });
+            if (king.is_valid_move) {
+               //
+               // The king's allies can't block the enemy from threatening the king.
+               //
+               alert("Checkmate! The king is under threat from " + king_threat.describe() + " and no king ally can be moved to block it.");
+               return;
+            }
+         }
       }
       //
       // The king can move to an unoccupied space, or he can kill an enemy without 
