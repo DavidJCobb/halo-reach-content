@@ -31,21 +31,24 @@ body{display:flex;flex-flow:row nowrap}
                        1px  0px 0 #000,
                       -1px  0px 0 #000;
       }
+      #chessboard .space.valid-move{border:2px solid #4FF}
 
-#palette{
-   display:flex;flex-flow:row nowrap;
-   padding:.25em .5em;
+.tool-panel{
    border:1px solid #FFF;
    border-right-color:#FFF;
    border-left-color:#AAA;
    border-bottom-color:#FFF;
    border-top-color:#AAA;
    background:#FAFAFA;
+   margin-bottom:1em;
 }
-   #palette ul{flex:0 0 auto;list-style:none;padding:1em;margin:0}
-      #palette li{border:1px solid #886;background:#EEC;padding:.25em .5em;text-align:center;margin-bottom:.25em}
-      #palette li{user-select:none}
-      #palette li.selected{border:1px solid #68A;background:#DEF}
+   .tool-panel .title{display:block;padding:.25em .5em;text-align:center;font-weight:bold}
+   #palette div{display:flex;flex-flow:row nowrap;padding:.25em .5em}
+      .button-list{flex:0 0 auto;list-style:none;padding:0 1em 1em 1em;margin:0}
+         .button-list li{border:1px solid #886;background:#EEC;padding:.25em .5em;text-align:center;margin-bottom:.25em}
+         .button-list li{user-select:none;cursor:default}
+         .button-list li:hover{border:1px solid #68A;background:#DEF}
+         .button-list li.selected{border:1px solid #68A;background:#DEF}
       </style>
    </head>
    <body>
@@ -54,19 +57,31 @@ body{display:flex;flex-flow:row nowrap}
          </div>
       </div>
       <div class="col">
-         <div id="palette">
-            <ul class="type">
-               <li data-value="0" class="selected">None</li>
-               <li data-value="1">Pawn</li>
-               <li data-value="2">Knight</li>
-               <li data-value="3">Bishop</li>
-               <li data-value="4">Rook</li>
-               <li data-value="5">Queen</li>
-               <li data-value="6">King</li>
-            </ul>
-            <ul class="faction">
-               <li data-value="1" class="selected">White</li>
-               <li data-value="2">Black</li>
+         <div id="palette" class="tool-panel">
+            <span class="title">Edit Board</span>
+            <div>
+               <ul class="type button-list">
+                  <li data-value="0" class="selected">None</li>
+                  <li data-value="1">Pawn</li>
+                  <li data-value="2">Knight</li>
+                  <li data-value="3">Bishop</li>
+                  <li data-value="4">Rook</li>
+                  <li data-value="5">Queen</li>
+                  <li data-value="6">King</li>
+               </ul>
+               <ul class="faction button-list">
+                  <li data-value="1" class="selected">White</li>
+                  <li data-value="2">Black</li>
+                  <hr/>
+                  <li id="edit-clear-board">Clear</li>
+               </ul>
+            </div>
+         </div>
+         <div id="tests" class="tool-panel">
+            <span class="title">Run Tests</span>
+            <ul class="button-list">
+               <li id="test-moves-white">White Valid Moves</li>
+               <li id="test-moves-black">Black Valid Moves</li>
             </ul>
          </div>
       </div>
@@ -89,6 +104,10 @@ const piece_type_bishop = 3;
 const piece_type_rook   = 4;
 const piece_type_queen  = 5;
 const piece_type_king   = 6;
+
+const no_object = void 0;
+const no_player = void 0;
+const no_team   = void 0;
       
 class Space {
    constructor() {
@@ -131,7 +150,7 @@ document.getElementById("chessboard").addEventListener("click", function(e) {
    }
    //
    let x = +node.getAttribute("data-x");
-   let y = +node.getAttribute("data-x");
+   let y = +node.getAttribute("data-y");
    let data = _spaces[y * 8 + x];
    data.piece_type = type;
    data.owner      = fact;
@@ -151,6 +170,17 @@ document.getElementById("palette").addEventListener("click", function(e) {
    });
    node.classList.add("selected");
 });
+document.getElementById("edit-clear-board").addEventListener("click", function(e) {
+   let board = document.getElementById("chessboard");
+   for(let i = 0; i < _spaces.length; ++i) {
+      let data = _spaces[i];
+      data.piece_type = piece_type_none;
+      data.owner      = faction_none;
+      let node = board.children[i];
+      node.setAttribute("data-piece-type", data.piece_type);
+      node.setAttribute("data-owner",      data.owner);
+   }
+});
 
 {  // build chessboard
    let node = document.getElementById("chessboard");
@@ -168,6 +198,19 @@ document.getElementById("palette").addEventListener("click", function(e) {
          if (x % 2 != y % 2)
             div.setAttribute("dark", "dark");
          node.appendChild(div);
+      }
+   }
+   for(let y = 0; y < 8; ++y) {
+      for(let x = 0; x < 8; ++x) {
+         let space = _spaces[y * 8 + x];
+         if (y > 0)
+            space.space_above = _spaces[(y - 1) * 8 + x];
+         if (y < 7)
+            space.space_below = _spaces[(y + 1) * 8 + x];
+         if (x > 0)
+            space.space_left  = _spaces[y * 8 + (x - 1)];
+         if (x < 7)
+            space.space_right = _spaces[y * 8 + (x + 1)];
       }
    }
 }
@@ -217,6 +260,199 @@ function redrawChessboard() {
 }
 redrawChessboard();
 
+function checkValidMoves(current_piece) {
+   let x_diff;
+   let y_diff;
+   let target_space;
+   let temporary_obj;
+   if (current_piece.piece_type == piece_type_bishop || current_piece.piece_type == piece_type_queen) {
+      target_space = current_piece;
+      (function upperleft() {
+         target_space = target_space.space_left;
+         if (target_space) // omit this condition in Megalo
+            target_space = target_space.space_above;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = true;
+               upperleft()
+            }
+         }
+      })();
+      target_space = current_piece;
+      (function upperright() {
+         target_space = target_space.space_right;
+         if (target_space) // omit this condition in Megalo
+            target_space = target_space.space_above;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = true;
+               upperright()
+            }
+         }
+      })();
+      target_space = current_piece;
+      (function lowerleft() {
+         target_space = target_space.space_left;
+         if (target_space) // omit this condition in Megalo
+            target_space = target_space.space_below;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = true;
+               lowerleft()
+            }
+         }
+      })();
+      target_space = current_piece;
+      (function lowerright() {
+         target_space = target_space.space_right;
+         if (target_space) // omit this condition in Megalo
+            target_space = target_space.space_below;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = true;
+               lowerright()
+            }
+         }
+      })();
+   }
+   if (current_piece.piece_type == piece_type_rook || current_piece.piece_type == piece_type_queen) {
+      target_space = current_piece;
+      (function left() {
+         target_space = target_space.space_left;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = 1;
+               left();
+            }
+         }
+      })();
+      target_space = current_piece;
+      (function right() {
+         target_space = target_space.space_right;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = 1;
+               right();
+            }
+         }
+      })();
+      target_space = current_piece;
+      (function up() {
+         target_space = target_space.space_above;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = 1;
+               up();
+            }
+         }
+      })();
+      target_space = current_piece;
+      (function down() {
+         target_space = target_space.space_below;
+         if (target_space != no_object) {
+            if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+               target_space.is_valid_move = 1;
+               down();
+            }
+         }
+      })();
+   }
+   if (current_piece.piece_type == piece_type_knight) {
+      forEachSpaceDo(function(current_object) {
+         if (current_object.piece_type == piece_type_none || current_object.owner != current_piece.owner) {
+            x_diff = current_piece.coord_x - current_object.coord_x;
+            y_diff = current_piece.coord_y - current_object.coord_y;
+            x_diff *= y_diff;
+            if (x_diff == 2 || x_diff == -2) {
+               current_object.is_valid_move = true;
+            }
+         }
+      });
+   }
+   if (current_piece.piece_type == piece_type_king) {
+      function _set_if() {
+         if (!target_space) return; // JS-only
+         if (target_space.piece_type == piece_type_none || target_space.owner != current_piece.owner) {
+            target_space.is_valid_move = true;
+         }
+      }
+      target_space = current_piece.space_left;
+      _set_if();
+      target_space = target_space? target_space.space_above : no_object; // upper-left
+      _set_if();
+      target_space = current_piece.space_right;
+      _set_if();
+      target_space = target_space? target_space.space_below : no_object; // lower-right
+      _set_if();
+      target_space = current_piece.space_above;
+      _set_if();
+      target_space = target_space? target_space.space_right : no_object; // upper-right
+      _set_if();
+      target_space = current_piece.space_below;
+      _set_if();
+      target_space = target_space? target_space.space_left : no_object; // lower-left
+      _set_if();
+   }
+   if (current_piece.piece_type == piece_type_pawn) {
+      target_space  = current_piece.space_above;
+      temporary_obj = target_space ? target_space.space_above : no_object; // omit condition for Megalo
+      y_diff        = 6;
+      if (current_piece.owner == faction_black) {
+         target_space  = current_piece.space_below;
+         temporary_obj = target_space ? target_space.space_below : no_object; // omit condition for Megalo
+         y_diff        = 1;
+      }
+      if (target_space.piece_type == piece_type_none) {
+         target_space.is_valid_move = true; // forward movement
+         if (current_piece.coord_y == y_diff && temporary_obj.piece_type == piece_type_none) {
+            temporary_obj.is_valid_move = true; // double-forward movement
+         }
+      }
+      //
+      // Diagonal capture:
+      //
+      function _check_diagonal() {
+         if (!temporary_obj) return; // JS-only
+         temporary_obj.is_valid_move |= temporary_obj.is_king_move;
+         if (temporary_obj.piece_type != piece_type_none && temporary_obj.owner != current_piece.owner) {
+            temporary_obj.is_valid_move = 1;
+         }
+      }
+      temporary_obj = target_space ? target_space.space_left : no_object;
+      _check_diagonal();
+      temporary_obj = target_space ? target_space.space_right : no_object;
+      _check_diagonal();
+      //
+      // TODO: en passant
+      //
+      
+   }
+}
+
+function showMovesFor(faction) {
+   forEachSpaceDo(function(current_object) {
+      current_object.is_king_move  = false;
+      current_object.is_valid_move = false;
+   });
+   forEachSpaceDo(function(current_object) {
+      if (current_object.owner == faction)
+         checkValidMoves(current_object);
+   });
+   let board = document.getElementById("chessboard");
+   for(let i = 0; i < _spaces.length; ++i) {
+      let node = board.children[i];
+      if (_spaces[i].is_valid_move)
+         node.classList.add("valid-move");
+      else
+         node.classList.remove("valid-move");
+   }
+}
+document.getElementById("test-moves-white").addEventListener("click", function(e) {
+   showMovesFor(faction_white);
+});
+document.getElementById("test-moves-black").addEventListener("click", function(e) {
+   showMovesFor(faction_black);
+});
 
       </script>
    </body>
