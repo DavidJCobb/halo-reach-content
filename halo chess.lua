@@ -17,6 +17,25 @@
 --
 --        - working on it; see prep_for_avoiding_self_check() below
 --
+--       TODO: Test piece selection: you should not be able to select a piece 
+--       that cannot be moved without leaving you in check. Attempting to do so 
+--       should show a HUD widget explaining that you can't.
+--
+--       TODO: Test move selection: you should not be able to move your king to 
+--       a space that is under threat from an enemy. Spaces like that should not 
+--       even light up.
+--
+--       TODO: If a piece can't be safely moved, change its waypoint to a "lock" 
+--       icon.
+--
+--       TODO: At the start of the player's turn (i.e. in end_turn()), identify 
+--       all pieces that have no legal moves, and disallow selecting them. If 
+--       the piece has no valid moves (i.e. is_valid_move == 0 for all spaces; 
+--       this is distinct from having valid moves but not being safely movable 
+--       because it's blocking the king from being in check), then show a HUD 
+--       message when the player attempts to control it: "There are no spaces 
+--       you can move this Pawn to. Try another piece."
+--
 -- TODO: draw if a player has no legal moves but is not in check
 --
 -- TODO: pawn promotion
@@ -162,6 +181,7 @@ declare temp_plr_00 with network priority low
 declare temp_tem_00 with network priority low
 
 alias announced_game_start = player.number[0]
+alias ui_would_self_check  = player.number[1]
 alias target_space         = player.object[0] -- piece the player is about to select (pending their timer)
 alias selection_timer = player.timer[0]
 declare player.selection_timer = 2
@@ -204,7 +224,11 @@ alias ui_endgame    = script_widget[3] -- multi-purpose widget
 --                 - Award point to winner
 --                 - Reset (is_valid_move) and friends for all spaces
 --                 - If loser has no king, end round
+--              - If not checkmate, pre-validate moves:
+--                 - Identify spaces the king cannot safely move to
+--                 - Identify pieces that can't be moved because they're blocking the king from being in check
 --           - Manage 75-turn draw rule
+--     = Same containing trigger also ends the turn if the turn clock runs out
 --  - Handle piece death, if it occurs
 --     - Handle moving a piece to an enemy-occupied space
 --        - If the player is double-moving a pawn: flag as vulnerable to capturing en passant
@@ -218,6 +242,9 @@ alias ui_endgame    = script_widget[3] -- multi-purpose widget
 --                 - Award point to winner
 --                 - Reset (is_valid_move) and friends for all spaces
 --                 - If loser has no king, end round
+--              - If not checkmate, pre-validate moves:
+--                 - Identify spaces the king cannot safely move to
+--                 - Identify pieces that can't be moved because they're blocking the king from being in check
 --           - Manage 75-turn draw rule
 --     - If victory process is active, handle death of the loser's king
 --  - Victory process, if active
@@ -582,6 +609,26 @@ do -- UI
          end
       end
       ui_your_turn.set_visibility(active_player, true)
+      if active_player.ui_would_self_check == 1 then
+         ui_bad_move.set_visibility(active_player, true)
+         temp_obj_00 = active_player.target_space
+         temp_int_00 = temp_obj_00.piece_type
+         if temp_int_00 == piece_type_pawn then
+            ui_bad_move.set_text("You cannot move this Pawn. Doing so would place your King in check. Try another piece.")
+         end
+         if temp_int_00 == piece_type_rook then
+            ui_bad_move.set_text("You cannot move this Rook. Doing so would place your King in check. Try another piece.")
+         end
+         if temp_int_00 == piece_type_knight then
+            ui_bad_move.set_text("You cannot move this Knight. Doing so would place your King in check. Try another piece.")
+         end
+         if temp_int_00 == piece_type_queen then
+            ui_bad_move.set_text("You cannot move this Queen. Doing so would place your King in check. Try another piece.")
+         end
+         if temp_int_00 == piece_type_bishop then
+            ui_bad_move.set_text("You cannot move this Bishop. Doing so would place your King in check. Try another piece.")
+         end
+      end
    end
 end
 
@@ -1031,26 +1078,6 @@ function begin_victory()
    end
 end
 
---
--- TODO: We need to actually call this function at the start of a player's turn, 
--- i.e. from inside of the (end_turn) function after we have switched the active 
--- faction AND verified that the player hasn't been placed into checkmate.
---
--- We also need to modify piece selection and move selection to disallow the 
--- selection of pieces that can't be moved without placing the player in check, 
--- and disallow moving the king to a space that would place it in check. Refer 
--- to the (object.space_flags) values above for the relevant flags.
---
--- We should also indicate disallowed pieces with a "lock"-icon waypoint and 
--- display a HUD widget if the player enters their space's shape explaining why 
--- the player can't control them. ("You cannot move this Pawn. Doing so would 
--- place your King in check. Try another piece.")
---
--- And if we really wanna go the extra mile, we could also have (end_turn) 
--- identify any pieces that have no valid moves, and disallow controlling 
--- those as well. (We'd want a HUD message there, too: "There are no spaces 
--- you can move this Pawn to. Try another piece.")
---
 function prep_for_avoiding_self_check()
    --
    -- Prepare piece state to prevent the active player from putting 
@@ -1405,6 +1432,9 @@ function end_turn()
             end
          end
       end
+      if winning_faction == faction_none then -- not in checkmate
+         prep_for_avoiding_self_check()
+      end
       --
       alias pawn_count = temp_int_00
       pawn_count = 0
@@ -1463,6 +1493,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       end
    end
    --
+   active_player.ui_would_self_check = 0
    if selected_piece == no_object then -- the player is not in control of a piece
       --
       -- Code to select a piece to control.
@@ -1477,10 +1508,16 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       for each object with label "board_space" do
          current_object.set_shape_visibility(no_one)
          if current_object.owner == active_faction and current_object.shape_contains(active_player.biped) then
-            current_object.set_shape_visibility(everyone)
-            active_player.target_space = current_object
-            if prior_space != current_object then
-               active_player.selection_timer.reset()
+            temp_int_00  = current_object.space_flags
+            temp_int_00 &= space_flag_moving_would_self_check
+            active_player.ui_would_self_check = 1
+            if temp_int_00 == 0 then
+               active_player.ui_would_self_check = 0
+               current_object.set_shape_visibility(everyone)
+               active_player.target_space = current_object
+               if prior_space != current_object then
+                  active_player.selection_timer.reset()
+               end
             end
          end
       end
@@ -1536,13 +1573,20 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       for each object with label "board_space" do
          current_object.set_shape_visibility(no_one)
          if current_object.is_valid_move == 1 then
-            current_object.set_shape_visibility(everyone)
-            if  current_object.piece_type == piece_type_none
-            and active_player.target_space != current_object
-            and current_object.shape_contains(active_player.biped)
-            then
-               active_player.target_space = current_object
-               active_player.selection_timer.reset()
+            temp_int_00 = 0
+            if selected_space.piece_type == piece_type_king then
+               temp_int_00  = current_object.space_flags
+               temp_int_00 &= space_flag_is_threatened_by_enemy
+            end
+            if temp_int_00 == 0 then
+               current_object.set_shape_visibility(everyone)
+               if  current_object.piece_type == piece_type_none
+               and active_player.target_space != current_object
+               and current_object.shape_contains(active_player.biped)
+               then
+                  active_player.target_space = current_object
+                  active_player.selection_timer.reset()
+               end
             end
          end
       end
