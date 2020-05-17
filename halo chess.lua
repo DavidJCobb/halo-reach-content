@@ -9,73 +9,13 @@
 --
 
 --
--- TODO: if a player's move would put their king in check, revert the move and 
---       force them to try another. (we can't disallow these moves in advance 
---       because we'd have to detect cases like if the player has a piece in 
---       between the king and an enemy rook, and they move that piece, exposing 
---       their own king -- just lots of things that are indirect and harder to 
---       test for than their complimentary cases in the checkmate logic.)
+-- TODO: prevent the player from making a move that would leave their own king 
+--       in check.
 --
 --        - if the player has no permitted moves, and there is no time limit on 
 --          turns, then this will softlock. how do we deal with that?
 --
---        - hm... it might be possible to forbid moves that would put a player's 
---          own king in check, but it'd be really tricky. we would have to...
---
---           - identify all spaces threatened by an enemy piece, and disallow 
---             moving the king there. simple.
---
---           - to prevent the player from moving a piece that is blocking their 
---             king from being in check: when setting up a piece's valid moves, 
---             check if its allied king is off in any cardinal or diagonal 
---             direction (with no other allied pieces between the current piece 
---             and the king). if so, check the opposite direction for either an 
---             enemy queen or (depending on whether it's cardinal or diagonal) 
---             an enemy rookor bishop. if a matching enemy is found, then the 
---             current piece cannot be moved without putting the king in check.
---
---              - pawns can only capture kings diagonally, from adjacent spaces, 
---                and so cannot be blocked. we can ignore enemy pawns.
---
---              - enemy knights can leap over pieces and so can be ignored here 
---                (what we're trying to prevent is moving a king-allied piece 
---                that is blocking the king from being in check; you cannot 
---                block a knight). the enemy king can be ignored as well, since 
---                kings can't traverse across multiple spaces: they must be 
---                adjacent to each other to threaten each other and so cannot 
---                be blocked.
---
---              = this could lead to ugly UX, where we indicate that a piece 
---                can be controlled only to punt the user out and tell them that 
---                they can't safely move it. if we make this code a function, we 
---                can call it on all of the player's pieces and disallow the 
---                player from even taking control of pieces that can't be safely 
---                moved. of course, we'd need to indicate WHY we're doing this, 
---                and i'm not sure we have the UI widgets to spare; we'll need 
---                to make some changes...
---          
---          there is an uglier alternative approach, which would require taking 
---          our current "valid move" logic and splitting it (current code would 
---          be check(mate) only, with a new approach for setting up a player's 
---          available moves). the new logic would be:
---
---           - identify all spaces threatened by an enemy piece, and disallow 
---             moving the king there. simple.
---
---           - for each piece with a contiguous direction of movement (i.e. all 
---             enemy rooks, bishops, and queens): if only one king-allied piece 
---             blocks any of these enemy pieces from the king, then flag that 
---             king-allied piece and not being movable. (essentially, this 
---             requires a modified variant on valid-move logic: for each of the 
---             enemy's directions of movement, instead of stopping iteration at 
---             the first blocker, we remember the first blocker found, the 
---             number of blockers up to the enemy king, and whether the king is 
---             even in that direction relative to the enemy piece. if there is 
---             only one blocker and it is indeed interposed between the enemy 
---             and the king, then we flag that blocker as not being safely 
---             movable.)
---          
---          probably would consume too much space.
+--        - working on it; see prep_for_avoiding_self_check() below
 --
 -- TODO: draw if a player has no legal moves but is not in check
 --
@@ -1091,6 +1031,26 @@ function begin_victory()
    end
 end
 
+--
+-- TODO: We need to actually call this function at the start of a player's turn, 
+-- i.e. from inside of the (end_turn) function after we have switched the active 
+-- faction AND verified that the player hasn't been placed into checkmate.
+--
+-- We also need to modify piece selection and move selection to disallow the 
+-- selection of pieces that can't be moved without placing the player in check, 
+-- and disallow moving the king to a space that would place it in check. Refer 
+-- to the (object.space_flags) values above for the relevant flags.
+--
+-- We should also indicate disallowed pieces with a "lock"-icon waypoint and 
+-- display a HUD widget if the player enters their space's shape explaining why 
+-- the player can't control them. ("You cannot move this Pawn. Doing so would 
+-- place your King in check. Try another piece.")
+--
+-- And if we really wanna go the extra mile, we could also have (end_turn) 
+-- identify any pieces that have no valid moves, and disallow controlling 
+-- those as well. (We'd want a HUD message there, too: "There are no spaces 
+-- you can move this Pawn to. Try another piece.")
+--
 function prep_for_avoiding_self_check()
    --
    -- Prepare piece state to prevent the active player from putting 
@@ -1115,9 +1075,44 @@ function prep_for_avoiding_self_check()
       end
    end
    if king != no_object then
+      --
+      -- We need to convert all spaces' (is_valid_move) to the special flag 
+      -- that we'll use to indicate that the player can't move their king 
+      -- there: (space_flag_is_threatened_by_enemy).
+      --
+      -- We also need to detect allied pieces that are blocking an enemy from 
+      -- reaching the king. A piece meets this description if the following 
+      -- criteria are met:
+      --
+      --  - The allied piece is aligned with the king on a diagonal or cardinal 
+      --    direction.
+      --
+      --  - There are no other pieces between the allied piece and the king.
+      --
+      --  - The allied piece is between the king and one or more enemy pieces.
+      --
+      --  - The nearest enemy piece is capable of moving toward the king (i.e. 
+      --    it is a queen, or: it is a rook and the pieces are aligned on a 
+      --    cardinal direction; or: it is a bishop and the pieces are aligned 
+      --    on a diagonal direction).
+      --
+      -- We want to set the flag (space_flag_moving_would_self_check) on all 
+      -- allied pieces that meet those conditions.
+      --
+      -- As a nice shortcut, if these conditions are met, then the allied piece 
+      -- will also be under threat from the nearest enemy, i.e. is_valid_move 
+      -- will be true. This means we can use (is_valid_move) as a filter and 
+      -- only run our checks where they're actually needed.
+      --
+      -- We can ignore knights and pawns, since the former cannot be blocked 
+      -- and the latter can only capture a king while adjacent to that king 
+      -- (i.e. there are no spaces between it and the king, and so it cannot 
+      -- be blocked).
+      --
       for each object with label "board_space" do
          if current_object.is_valid_move != 0 then
-            current_object.space_flags |= space_flag_is_threatened_by_enemy
+            current_object.space_flags |= space_flag_is_threatened_by_enemy -- is_valid_move -> flag
+            --
             if  current_object.piece_type != piece_type_none
             and current_object.piece_type != piece_type_king
             and current_object.owner == active_faction then
@@ -1126,120 +1121,134 @@ function prep_for_avoiding_self_check()
                -- an enemy from reaching the king.
                --
                alias has_path_to_king = temp_int_00 -- there are no pieces between this one and its allied king
-               alias diff_x           = temp_int_01
-               alias diff_y           = temp_int_02
-               alias diff_other       = temp_int_03
-               alias enemy_distance   = temp_int_04 -- distance between the nearest enemy and the king
-               alias current_piece    = temp_obj_01
+               alias current_ally     = temp_obj_01
                alias nearest_enemy    = temp_obj_02
                has_path_to_king = 1
-               enemy_distance   = 99
-               current_piece    = current_object
-               nearest_enemy    = no_object
+               current_ally  = current_object
+               nearest_enemy = no_object
                --
-               diff_x  = current_object.coord_x
-               diff_x -= king.coord_x
-               diff_y  = current_object.coord_y
-               diff_y -= king.coord_y
+               if current_ally.coord_y == king.coord_y then -- left or right
+                  alias diff_sign = temp_int_01
+                  diff_sign  = current_ally.coord_x
+                  diff_sign -= king.coord_x
+                  --
+                  -- Convert to -1, 0, or 1:
+                  --
+                  diff_sign >>= 15 -- to sign bit
+                  diff_sign *= -2
+                  diff_sign += 1
+                  --
+                  alias nearest_opposite = temp_int_02
+                  nearest_opposite = 99
+                  for each object with label "board_space" do
+                     if current_object.coord_y == current_ally.coord_y and current_object.piece_type != piece_type_none then
+                        alias distance = temp_int_03
+                        alias working  = temp_int_04
+                        distance  = current_object.coord_x
+                        distance -= king.coord_x
+                        working  = distance
+                        working *= diff_x
+                        if working > 0 then -- current_object is between current_ally and king
+                           has_path_to_king = 0
+                        end
+                        if working < 0 then -- king is between current_object and current_ally
+                           working *= -1
+                           if working < nearest_opposite then
+                              nearest_opposite = working
+                              nearest_enemy    = no_object
+                              if  current_object.piece_type == piece_type_queen
+                              or  current_object.piece_type == piece_type_rook
+                              and current_object.owner != king.owner
+                              then
+                                 nearest_enemy = current_object
+                              end
+                           end
+                        end
+                     end
+                  end
+               end
+               if current_ally.coord_x == king.coord_x then -- above or below
+                  alias diff_sign = temp_int_01
+                  diff_sign  = current_ally.coord_y
+                  diff_sign -= king.coord_y
+                  --
+                  -- Convert to -1, 0, or 1:
+                  --
+                  diff_sign >>= 15 -- to sign bit
+                  diff_sign *= -2
+                  diff_sign += 1
+                  --
+                  alias nearest_opposite = temp_int_02
+                  nearest_opposite = 99
+                  for each object with label "board_space" do
+                     if current_object.coord_x == current_ally.coord_x and current_object.piece_type != piece_type_none then
+                        alias distance = temp_int_03
+                        alias working  = temp_int_04
+                        distance  = current_object.coord_y
+                        distance -= king.coord_y
+                        working  = distance
+                        working *= diff_y
+                        if working > 0 then -- current_object is between current_ally and king
+                           has_path_to_king = 0
+                        end
+                        if working < 0 then -- king is between current_object and current_ally
+                           working *= -1
+                           if working < nearest_opposite then
+                              nearest_opposite = working
+                              nearest_enemy    = no_object
+                              if  current_object.piece_type == piece_type_queen
+                              or  current_object.piece_type == piece_type_rook
+                              and current_object.owner != king.owner
+                              then
+                                 nearest_enemy = current_object
+                              end
+                           end
+                        end
+                     end
+                  end
+               end
                --
-               if diff_y == 0 then -- left or right
-                  -- if diff_x < 0 then the king is to the right of current_piece
-                  for each object with label "board_space" do
-                     if current_object.coord_y == current_piece.coord_y and current_object.piece_type != piece_type_none then -- piece on same row
-                        diff_other  = current_object.coord_x
-                        diff_other -= king.coord_x
-                        diff_other *= diff_x
-                        if diff_other > 0 then -- current_object is on the same side of the king as current_piece
-                           alias this_distance = diff_other
-                           this_distance /= diff_x
-                           if diff_x < 0 and current_object.coord_x > current_piece.coord_x then -- king is on the right; current_object is nearer to the king
-                              has_path_to_king = 0
-                           end
-                           if diff_x > 0 and current_object.coord_x < current_piece.coord_x then -- king is on the left; current_object is nearer to the king
-                              has_path_to_king = 0
-                           end
+               if current_ally.coord_x != king.coord_x and current_ally.coord_x == king.coord_x then
+                  alias diff_x = temp_int_01
+                  alias nearest_opposite = temp_int_02
+                  alias diff_y = temp_int_03
+                  diff_x  = current_ally.coord_x
+                  diff_x -= king.coord_x
+                  diff_y  = current_ally.coord_y
+                  diff_y -= king.coord_y
+                  if diff_y != diff_x then
+                     diff_y *= -1
+                  end
+                  if diff_y == diff_x then
+                     --
+                     -- The current_ally is on a diagonal from the king.
+                     --
+                     nearest_opposite = 99
+                     for each object with label "board_space" do
+                        alias temp_x = diff_y
+                        alias temp_y = temp_int_04
+                        temp_x  = current_object.coord_x
+                        temp_x -= king.coord_x
+                        temp_y  = current_object.coord_y
+                        temp_y -= king.coord_y
+                        if temp_y != temp_x then
+                           temp_y *= -1
                         end
-                        if  diff_other < 0 -- current_object is on the opposite side of the king from current_piece
-                        and current_object.owner != king.owner -- current_object is an enemy
-                        and current_object.piece_type == piece_type_rook  -- current_object is a rook or queen
-                        or  current_object.piece_type == piece_type_queen
-                        then
-                           alias this_distance = diff_other
-                           this_distance /= diff_x
-                           if this_distance < 0 then
-                              this_distance *= -1
-                           end
-                           if this_distance < enemy_distance then
-                              enemy_distance = this_distance
-                              nearest_enemy  = current_object
-                           end
+                        if temp_y == temp_x then
+                           --
+                           -- The current_object is on a diagonal from the king.
+                           --
+                           
+                           
                         end
                      end
                   end
                end
-               if diff_x == 0 then -- up or down
-                  -- if diff_y < 0 then the king is to the below current_piece
-                  for each object with label "board_space" do
-                     if current_object.coord_x == current_piece.coord_x and current_object.piece_type != piece_type_none then -- piece on same column
-                        diff_other  = current_object.coord_y
-                        diff_other -= king.coord_y
-                        diff_other *= diff_y
-                        if diff_other > 0 then -- current_object is on the same side of the king as current_piece
-                           alias this_distance = diff_other
-                           this_distance /= diff_y
-                           if diff_y < 0 and current_object.coord_y > current_piece.coord_y then -- king is below; current_object is nearer to the king
-                              has_path_to_king = 0
-                           end
-                           if diff_y > 0 and current_object.coord_y < current_piece.coord_y then -- king is above; current_object is nearer to the king
-                              has_path_to_king = 0
-                           end
-                        end
-                        if  diff_other < 0 -- current_object is on the opposite side of the king from current_piece
-                        and current_object.owner != king.owner -- current_object is an enemy
-                        and current_object.piece_type == piece_type_rook  -- current_object is a rook or queen
-                        or  current_object.piece_type == piece_type_queen
-                        then
-                           alias this_distance = diff_other
-                           this_distance /= diff_y
-                           if this_distance < 0 then
-                              this_distance *= -1
-                           end
-                           if this_distance < enemy_distance then
-                              --
-                              -- This doesn't catch additional allied pieces between a found enemy and the king
-                              --
-                              enemy_distance = this_distance
-                              nearest_enemy  = current_object
-                           end
-                        end
-                     end
-                  end
-               end
-               diff_other  = diff_x
-               diff_other *= diff_y
-               diff_other /= diff_x
-               if diff_other != diff_x then
-                  diff_other *= -1
-               end
-               if diff_other == diff_x then
-                  --
-                  -- This is a diagonal: given (o = x * y), if (o / x = x) or (o / x = -x), then 
-                  -- it must be true that (x = (+/-)y).
-                  --
-                  for each object with label "board_space" do
-                     if current_object.piece_type != piece_type_none then
-                        
-                        
-                        
-                     end
-                  end
-                  --
-                  -- TODO: DIAGONALS
-                  --
-               end
+               --
+               -- All tests done for current_ally.
                --
                if has_path_to_king == 1 and nearest_enemy != no_object then
-                  current_piece.space_flags |= space_flag_moving_would_self_check
+                  current_ally.space_flags |= space_flag_moving_would_self_check
                end
             end
          end
