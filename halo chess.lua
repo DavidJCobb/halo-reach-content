@@ -86,20 +86,6 @@
 --       testing, and we may try to replace it with letting a single player 
 --       control both sides of the board)
 --
--- TODO: short delay between checkmate and victory
---
---        - WROTE A FIX BUT HAVEN'T TESTED IT YET. Hopefully the round won't end 
---          immediately upon checkmate anymore.
---
---        - If the fix works, we still need to set a time limit on the winners 
---          killing the enemy king.
---
--- TODO: Write code to end the round when the round timer runs out. If a checkmate  
---       occurs and we're waiting on the winner to kill the king, force the round 
---       timer to match the time limit on killing the king. (We award points as 
---       soon as the checkmate/victory is detected, so after that it's just a 
---       matter of deciding when to end the round.)
---
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
 --       rook, one knight, one bishop, and one queen, and you get waypoints on 
@@ -110,28 +96,7 @@
 --
 -- TODO: spawning the player into a Monitor after a move: i think official halo 
 --       chess uses an offset of (-15, 0, 15); try that and see if it's consistent 
---       with gameplay videos. (currently we do (0, 0, 6); i've been meaning to 
---       try out (-4, 0, 5) and see if that looks a bit better.)
---
--- TODO: sometimes there is a constant alarm sound which begins immediately at the 
---       start of the match and may play indefinitely; I think it may result from 
---       forcibly reassigning the player's biped but I don't know exactly why. 
---       it's obnoxious -- easily qualifying as making chess unplayable.
---
---       UPDATE: it's sound\weapons\missile_launcher\tracking_locking\locking\loop
---
---               why? "missile_launcher" is leftover sounds for the H3 missile pod.
---               i can't find any references to the tag, but then the usual tools 
---               don't let you search for that.
---
---       this happened to me in another test, when i was checking whether i could 
---       force players into a biped before the initial loadout camera, though in 
---       that case it stopped when that biped died. try modifying the script so 
---       that players aren't forced into a Monitor until they've spawned for the 
---       first time (and then be sure to test respawning)
---
---        - halo chess official only removes the monitor's weapons on spawn. check 
---          if constantly removing them is aggravating this weird problem
+--       with gameplay videos. (currently we do (0, 0, 6).)
 --
 -- DONE:
 --
@@ -169,6 +134,8 @@ alias piece_type_rook   = 4
 alias piece_type_queen  = 5
 alias piece_type_king   = 6
 alias piece_type_dummy  = -1
+
+alias time_limit_for_finishing_off_losing_king = 30
 
 -- General state:
 alias is_script_created = object.number[5]
@@ -270,19 +237,29 @@ alias ui_endgame    = script_widget[3] -- multi-purpose widget
 -- SCRIPT FLOW:
 --
 --  - Generate board
+--     - Generate initial piece arrangement
 --  - Generate bipeds for spaces that are missing them
+--     - If a biped is displaced from its space and not under player control, reset it
 --  - Force players into Monitor bipeds
+--     - ...but only if they've already spawned
+--     - Remove their weapons and grenades
 --  - Update UI during gameplay
 --  - Handle picking a piece or picking a move
+--     = Skip this processing if we are in the victory process.
+--     - If there is no active faction, pick one
+--     - If there is no active player (or they quit), pick one
 --     - Handle moving a piece to an unoccupied space
 --        - If the player is double-moving a pawn: flag as vulnerable to capturing en passant
 --        - If the player is killing a king: begin victory process
 --        - End turn
 --           = Skip this processing if we are in the victory process.
---           - Switch to next player
+--           - Switch to next faction and player
 --           - Clear en passant vulnerability from new player's pawns
 --           - Check whether new player is in check or checkmate
 --              - If checkmate, begin the victory process.
+--                 - Award point to winner
+--                 - Reset (is_valid_move) and friends for all spaces
+--                 - If loser has no king, end round
 --           - Manage 75-turn draw rule
 --  - Handle piece death, if it occurs
 --     - Handle moving a piece to an enemy-occupied space
@@ -290,17 +267,22 @@ alias ui_endgame    = script_widget[3] -- multi-purpose widget
 --        - If the player is killing a king: begin victory process
 --        - End turn
 --           = Skip this processing if we are in the victory process.
---           - Switch to next player
+--           - Switch to next faction and player
 --           - Clear en passant vulnerability from new player's pawns
 --           - Check whether new player is in check or checkmate
 --              - If checkmate, begin the victory process.
+--                 - Award point to winner
+--                 - Reset (is_valid_move) and friends for all spaces
+--                 - If loser has no king, end round
 --           - Manage 75-turn draw rule
 --     - If victory process is active, handle death of the loser's king
 --  - Victory process, if active
+--     - Reset board space shape visibility
+--     - Failsafe: end the round if the active player disappears
 --     - Manage piece (in)vulnerability
 --     - Manage UI
 --  - Draw checks
---     - 75-turn rule
+--     - 75-turn rule (number of turns configurable via script option)
 --     - Insufficient materials 1
 --     - Insufficient materials 2
 --
@@ -477,11 +459,11 @@ for each object with label "board_space_extra" do -- generate missing bipeds
    --   extra.biped.set_waypoint_visibility(everyone)
    --end
    --
-   if winning_faction == faction_none then
+   if winning_faction == faction_none or winning_faction == cell.owner then
       alias biped = temp_obj_01
       alias face  = temp_obj_02
       --
-      if extra.biped != no_object and cell != selected_piece and not cell.shape_contains(extra.biped) then
+      if winning_faction == faction_none and extra.biped != no_object and cell != selected_piece and not cell.shape_contains(extra.biped) then
          extra.biped.delete()
       end
       if extra.biped == no_object then
@@ -612,7 +594,8 @@ end
 for each player do -- force players into Monitor bipeds
    alias biped   = temp_obj_00
    alias created = temp_obj_01
-   if not current_player.biped.is_of_type(monitor) then
+   biped = current_player.biped
+   if current_player.biped != no_object and not current_player.biped.is_of_type(monitor) then
       biped = current_player.biped
       if biped.is_script_created == 0 then
          created = board_center.place_at_me(monitor, none, none, 0, 0, 0, none)
@@ -1085,17 +1068,20 @@ function begin_victory()
       end
       winning_faction = faction_to_win
       team_to_win.score += 1
-for each player do game.show_message_to(active_player, none, "DEBUG: Beginning victory process for %s.", team_to_win) end
       --
       alias losing_king_alive = temp_int_00
       losing_king_alive = 0
       for each object with label "board_space" do
+         current_object.is_valid_move = 0
+         current_object.threatened_by = 0
+         current_object.en_passant_vulnerable = 0
+         --
          if current_object.piece_type == piece_type_king and current_object.owner != winning_faction then
             losing_king_alive = 1
+            game.round_timer = time_limit_for_finishing_off_losing_king
          end
       end
       if losing_king_alive == 0 then
-for each player do game.show_message_to(current_player, none, "DEBUG: Losing king is dead; victory process is ending round.") end
          game.end_round()
       end
    end
@@ -1120,8 +1106,10 @@ end
 function end_turn()
    if winning_faction == faction_none then
       alias previous_faction = temp_int_00
+      alias previous_player  = temp_plr_00
       --
       previous_faction = active_faction
+      previous_player  = active_player
       active_faction   = faction_white
       active_team      = team_white
       if previous_faction == faction_white then
@@ -1158,14 +1146,25 @@ function end_turn()
       if temp_int_04 != 0 then -- active faction is in check!
          turn_flags |= turn_flag_in_check
          if temp_int_03 != 0 then -- active faction is in checkmate!
-            for each player do
-               game.show_message_to(current_player, none, "Checkmate! %s wins!", active_team.enemy)
-            end
+            --
+            -- Revert active faction and player back to previous; then, trigger victory 
+            -- endgame.
+            --
             temp_int_00 = faction_white
             if active_faction == faction_white then
                active_faction = faction_black
             end
+            active_player = previous_player
             begin_victory() -- victory condition: checkmate
+            for each player do
+               temp_tem_00 = current_player.team
+               if temp_tem_00.faction == winning_faction then
+                  game.show_message_to(current_player, none, "Checkmate! Your team won!")
+               end
+               if temp_tem_00.faction != winning_faction and temp_tem_00.faction != faction_none then
+                  game.show_message_to(current_player, none, "Checkmate! Your team lost.")
+               end
+            end
          end
       end
       --
@@ -1213,6 +1212,10 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
    if active_faction == faction_none then
       active_faction = faction_white
       active_team    = team_white
+   end
+   if active_player != no_player and active_player.killer_type_is(quit) and active_player.team.has_any_players() then -- handle active player quitting
+      turn_clock.reset()
+      active_player = no_player
    end
    if active_player == no_player then
       for each player do
@@ -1344,7 +1347,6 @@ on object death: do
       --
       if winning_faction != faction_none and cell.piece_type == piece_type_king then -- end-of-match victory
          if cell.owner != winning_faction then
-for each player do game.show_message_to(current_player, none, "DEBUG: Victory process: king biped killed. Ending round.") end
             game.end_round()
          end
       end
@@ -1382,29 +1384,34 @@ function do_endgame_ui_visibility()
 end
 
 if winning_faction != faction_none then
-   alias winning_biped_count = temp_int_00
    alias cell = temp_obj_00
    --
-   winning_biped_count = 0
+   if active_player == no_player or active_player.killer_type_is(quit) then
+      game.end_round()
+   end
    for each object with label "board_space_extra" do
       current_object.biped.set_invincibility(0)
       cell = current_object.marker
+      cell.set_shape_visibility(no_one)
       if current_object.biped != no_object and cell.owner == winning_faction then
-         winning_biped_count += 1
          if not current_object.biped.is_out_of_bounds() then
             current_object.biped.set_invincibility(1)
          end
+         if cell.piece_type == piece_type_king then
+            if active_player.biped.is_of_type(monitor) then
+               active_player.biped.delete()
+            end
+            active_player.set_biped(current_object.biped)
+         end
       end
    end
-   if winning_biped_count == 0 then -- the winners lost all bipeds and can't kill the king
-for each player do game.show_message_to(current_player, none, "DEBUG: No winning bipeds. Winner: %n", winning_faction) end
-      game.end_round()
-   end
-   ui_endgame.set_text("%s won!", team_black)
+   ui_your_turn.set_text("Finish off the enemy King!")
+   ui_endgame.set_text("Black Team won!")
    if winning_faction == faction_white then
-      ui_endgame.set_text("%s won!", team_white)
+      ui_endgame.set_text("White Team won!")
    end
    do_endgame_ui_visibility()
+   ui_your_turn.set_visibility(active_player, true)
 end
 
 if winning_faction == faction_none then -- check for draw conditions
@@ -1480,4 +1487,8 @@ if winning_faction == faction_none then -- check for draw conditions
          game.end_round()
       end
    end
+end
+
+if game.round_time_limit > 0 or winning_faction != faction_none and game.round_timer.is_zero() then
+   game.end_round()
 end
