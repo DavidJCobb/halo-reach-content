@@ -155,6 +155,9 @@ alias is_valid_move = object.number[3]
 alias owner         = object.number[4]
 alias threatened_by = object.number[5] -- for check(mate) processing
 alias en_passant_vulnerable = object.number[6] -- pawns only; must be set on the turn the pawn double-moves, and cleared on its owner's next turn
+alias space_flags   = object.number[7]
+alias space_flag_moving_would_self_check = 0x0001 -- moving this piece would put you in check
+alias space_flag_is_threatened_by_enemy  = 0x0002 -- you cannot move your king here; this space is under threat by an enemy
 alias space_left    = object.object[0]
 alias space_right   = object.object[1]
 alias space_above   = object.object[2]
@@ -163,6 +166,7 @@ declare object.piece_type    = piece_type_none
 declare object.is_valid_move = 0
 declare object.threatened_by = 0
 declare object.owner         = faction_none
+declare object.space_flags   = 0
 --
 -- Cell-extra data:
 alias marker = object.object[0]
@@ -1087,6 +1091,162 @@ function begin_victory()
    end
 end
 
+function prep_for_avoiding_self_check()
+   --
+   -- Prepare piece state to prevent the active player from putting 
+   -- themselves in check.
+   --
+   for each object with label "board_space" do -- clear piece/space movement flags
+      current_object.space_flags   = 0
+      current_object.is_valid_move = 0
+      current_object.threatened_by = 0
+   end
+   for each object with label "board_space" do -- identify all enemy moves
+      if current_object.piece_type != piece_type_none and current_object.owner != active_faction then
+         temp_obj_00 = current_object -- argument
+         check_valid_move()
+      end
+   end
+   --
+   alias king = temp_obj_00
+   for each object with label "board_space" do
+      if current_object.piece_type == piece_type_king and current_object.owner == active_faction then
+         king = current_object
+      end
+   end
+   if king != no_object then
+      for each object with label "board_space" do
+         if current_object.is_valid_move != 0 then
+            current_object.space_flags |= space_flag_is_threatened_by_enemy
+            if  current_object.piece_type != piece_type_none
+            and current_object.piece_type != piece_type_king
+            and current_object.owner == active_faction then
+               --
+               -- This piece belongs to the active faction. Check if it is blocking 
+               -- an enemy from reaching the king.
+               --
+               alias has_path_to_king = temp_int_00 -- there are no pieces between this one and its allied king
+               alias diff_x           = temp_int_01
+               alias diff_y           = temp_int_02
+               alias diff_other       = temp_int_03
+               alias enemy_distance   = temp_int_04 -- distance between the nearest enemy and the king
+               alias current_piece    = temp_obj_01
+               alias nearest_enemy    = temp_obj_02
+               has_path_to_king = 1
+               enemy_distance   = 99
+               current_piece    = current_object
+               nearest_enemy    = no_object
+               --
+               diff_x  = current_object.coord_x
+               diff_x -= king.coord_x
+               diff_y  = current_object.coord_y
+               diff_y -= king.coord_y
+               --
+               if diff_y == 0 then -- left or right
+                  -- if diff_x < 0 then the king is to the right of current_piece
+                  for each object with label "board_space" do
+                     if current_object.coord_y == current_piece.coord_y and current_object.piece_type != piece_type_none then -- piece on same row
+                        diff_other  = current_object.coord_x
+                        diff_other -= king.coord_x
+                        diff_other *= diff_x
+                        if diff_other > 0 then -- current_object is on the same side of the king as current_piece
+                           alias this_distance = diff_other
+                           this_distance /= diff_x
+                           if diff_x < 0 and current_object.coord_x > current_piece.coord_x then -- king is on the right; current_object is nearer to the king
+                              has_path_to_king = 0
+                           end
+                           if diff_x > 0 and current_object.coord_x < current_piece.coord_x then -- king is on the left; current_object is nearer to the king
+                              has_path_to_king = 0
+                           end
+                        end
+                        if  diff_other < 0 -- current_object is on the opposite side of the king from current_piece
+                        and current_object.owner != king.owner -- current_object is an enemy
+                        and current_object.piece_type == piece_type_rook  -- current_object is a rook or queen
+                        or  current_object.piece_type == piece_type_queen
+                        then
+                           alias this_distance = diff_other
+                           this_distance /= diff_x
+                           if this_distance < 0 then
+                              this_distance *= -1
+                           end
+                           if this_distance < enemy_distance then
+                              enemy_distance = this_distance
+                              nearest_enemy  = current_object
+                           end
+                        end
+                     end
+                  end
+               end
+               if diff_x == 0 then -- up or down
+                  -- if diff_y < 0 then the king is to the below current_piece
+                  for each object with label "board_space" do
+                     if current_object.coord_x == current_piece.coord_x and current_object.piece_type != piece_type_none then -- piece on same column
+                        diff_other  = current_object.coord_y
+                        diff_other -= king.coord_y
+                        diff_other *= diff_y
+                        if diff_other > 0 then -- current_object is on the same side of the king as current_piece
+                           alias this_distance = diff_other
+                           this_distance /= diff_y
+                           if diff_y < 0 and current_object.coord_y > current_piece.coord_y then -- king is below; current_object is nearer to the king
+                              has_path_to_king = 0
+                           end
+                           if diff_y > 0 and current_object.coord_y < current_piece.coord_y then -- king is above; current_object is nearer to the king
+                              has_path_to_king = 0
+                           end
+                        end
+                        if  diff_other < 0 -- current_object is on the opposite side of the king from current_piece
+                        and current_object.owner != king.owner -- current_object is an enemy
+                        and current_object.piece_type == piece_type_rook  -- current_object is a rook or queen
+                        or  current_object.piece_type == piece_type_queen
+                        then
+                           alias this_distance = diff_other
+                           this_distance /= diff_y
+                           if this_distance < 0 then
+                              this_distance *= -1
+                           end
+                           if this_distance < enemy_distance then
+                              --
+                              -- This doesn't catch additional allied pieces between a found enemy and the king
+                              --
+                              enemy_distance = this_distance
+                              nearest_enemy  = current_object
+                           end
+                        end
+                     end
+                  end
+               end
+               diff_other  = diff_x
+               diff_other *= diff_y
+               diff_other /= diff_x
+               if diff_other != diff_x then
+                  diff_other *= -1
+               end
+               if diff_other == diff_x then
+                  --
+                  -- This is a diagonal: given (o = x * y), if (o / x = x) or (o / x = -x), then 
+                  -- it must be true that (x = (+/-)y).
+                  --
+                  for each object with label "board_space" do
+                     if current_object.piece_type != piece_type_none then
+                        
+                        
+                        
+                     end
+                  end
+                  --
+                  -- TODO: DIAGONALS
+                  --
+               end
+               --
+               if has_path_to_king == 1 and nearest_enemy != no_object then
+                  current_piece.space_flags |= space_flag_moving_would_self_check
+               end
+            end
+         end
+      end
+   end
+end
+
 function quick_force_active_player_to_monitor()
    alias working = temp_obj_00
    alias ctrlbip = temp_obj_01
@@ -1262,7 +1422,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
                current_object.is_valid_move = 0
                current_object.threatened_by = 0
             end
-            global.object[0] = selected_piece
+            temp_obj_00 = selected_piece -- argument
             check_valid_move()
          end
       end
