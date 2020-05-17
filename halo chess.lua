@@ -1152,7 +1152,7 @@ function prep_for_avoiding_self_check()
                         distance  = current_object.coord_x
                         distance -= king.coord_x
                         working  = distance
-                        working *= diff_x
+                        working *= diff_sign
                         if working > 0 then -- current_object is between current_ally and king
                            has_path_to_king = 0
                         end
@@ -1192,7 +1192,7 @@ function prep_for_avoiding_self_check()
                         distance  = current_object.coord_y
                         distance -= king.coord_y
                         working  = distance
-                        working *= diff_y
+                        working *= diff_sign
                         if working > 0 then -- current_object is between current_ally and king
                            has_path_to_king = 0
                         end
@@ -1226,7 +1226,7 @@ function prep_for_avoiding_self_check()
                   end
                   if diff_y == diff_x then
                      --
-                     -- The current_ally is on a diagonal from the king.
+                     -- The current_ally is on a diagonal with the king.
                      --
                      nearest_opposite = 99
                      for each object with label "board_space" do
@@ -1241,10 +1241,74 @@ function prep_for_avoiding_self_check()
                         end
                         if temp_y == temp_x then
                            --
-                           -- The current_object is on a diagonal from the king.
+                           -- The current_object is on a diagonal with the king; however, it 
+                           -- may not be the same diagonal as current_ally. If we were to 
+                           -- stop our checks here, we'd false-positive in the following case:
                            --
-                           
-                           
+                           -- ░▓░▓░▓░▓ Uppercase: enemy; lowercase: ally
+                           -- ▓░▓░▓R▓░
+                           -- ░▓░▓░▓░▓
+                           -- ▓░▓k▓░▓░ Allied king shares NE/SW diagonal with enemy rook
+                           -- ░▓░▓░▓░▓
+                           -- ▓░▓░▓░▓░
+                           -- ░▓░▓░▓p▓ Allied pawn shares NW/SE diagonal with allied king
+                           -- ▓░▓░▓░▓░
+                           --
+                           temp_x  = current_object.coord_x
+                           temp_x -= current_ally.coord_x
+                           temp_y  = current_object.coord_y
+                           temp_y -= current_ally.coord_y
+                           if temp_y != temp_x then
+                              temp_y *= -1
+                           end
+                           if temp_y == temp_x then
+                              --
+                              -- The current_object is on a diagonal with both the king and 
+                              -- the current_ally. This means that they must be on the same 
+                              -- diagonal: one piece must be physically between the others 
+                              -- along that diagonal.
+                              --
+                              -- From this point, we only need to check one axis, so we can 
+                              -- treat this the same as we would pieces on a cardinal axis. 
+                              -- The only difference is that we need to check for an enemy 
+                              -- bishop instead of an enemy rook. Let's copy the code for 
+                              -- pieces that share a row.
+                              --
+                              alias diff_sign = temp_int_01
+                              diff_sign  = current_ally.coord_x
+                              diff_sign -= king.coord_x
+                              --
+                              -- Convert to -1, 0, or 1:
+                              --
+                              diff_sign >>= 15 -- to sign bit
+                              diff_sign *= -2
+                              diff_sign += 1
+                              --
+                              alias nearest_opposite = temp_int_02
+                              nearest_opposite = 99
+                              alias distance = temp_int_03
+                              alias working  = temp_int_04
+                              distance  = current_object.coord_x
+                              distance -= king.coord_x
+                              working  = distance
+                              working *= diff_sign
+                              if working > 0 then -- current_object is between current_ally and king
+                                 has_path_to_king = 0
+                              end
+                              if working < 0 then -- king is between current_object and current_ally
+                                 working *= -1
+                                 if working < nearest_opposite then
+                                    nearest_opposite = working
+                                    nearest_enemy    = no_object
+                                    if  current_object.piece_type == piece_type_queen
+                                    or  current_object.piece_type == piece_type_bishop
+                                    and current_object.owner != king.owner
+                                    then
+                                       nearest_enemy = current_object
+                                    end
+                                 end
+                              end
+                           end
                         end
                      end
                   end
