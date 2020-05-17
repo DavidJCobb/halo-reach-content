@@ -1076,9 +1076,13 @@ function prep_for_avoiding_self_check()
    end
    if king != no_object then
       --
-      -- We need to convert all spaces' (is_valid_move) to the special flag 
+      -- We need to convert all spaces' (threatened_by) to the special flag 
       -- that we'll use to indicate that the player can't move their king 
-      -- there: (space_flag_is_threatened_by_enemy).
+      -- there: (space_flag_is_threatened_by_enemy). The reason we want to use 
+      -- (threatened_by) and not (is_valid_move) is so that we prevent you 
+      -- from putting yourself in check by using your king to kill an enemy 
+      -- that can be avenged by another enemy (checkmate logic also takes this 
+      -- into consideration).
       --
       -- We also need to detect allied pieces that are blocking an enemy from 
       -- reaching the king. A piece meets this description if the following 
@@ -1100,9 +1104,10 @@ function prep_for_avoiding_self_check()
       -- allied pieces that meet those conditions.
       --
       -- As a nice shortcut, if these conditions are met, then the allied piece 
-      -- will also be under threat from the nearest enemy, i.e. is_valid_move 
-      -- will be true. This means we can use (is_valid_move) as a filter and 
-      -- only run our checks where they're actually needed.
+      -- will also be under threat from the nearest enemy, i.e. (is_valid_move) 
+      -- will be true and (threatened_by) will be non-zero. This means we can 
+      -- use those variables as a filter and only run our checks where they're 
+      -- actually needed.
       --
       -- We can ignore knights and pawns, since the former cannot be blocked 
       -- and the latter can only capture a king while adjacent to that king 
@@ -1110,7 +1115,7 @@ function prep_for_avoiding_self_check()
       -- be blocked).
       --
       for each object with label "board_space" do
-         if current_object.is_valid_move != 0 then
+         if current_object.threatened_by > 0 then
             current_object.space_flags |= space_flag_is_threatened_by_enemy -- is_valid_move -> flag
             --
             if  current_object.piece_type != piece_type_none
