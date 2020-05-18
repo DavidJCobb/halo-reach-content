@@ -9,42 +9,11 @@
 --
 
 --
--- TODO: prevent the player from making a move that would leave their own king 
---       in check.
---
---        - if the player has no permitted moves, and there is no time limit on 
---          turns, then this will softlock. how do we deal with that?
---
---       TODO: Test piece selection: you should not be able to select a piece 
---       that cannot be moved without leaving you in check. Attempting to do so 
---       should show a HUD widget explaining that you can't.
---
---        = This will likely require forcing the board to a special configuration 
---          at round start. Alternatively we could try porting the logic 1:1 from 
---          Megalo to JavaScript again.
---
---           - I LIKE THIS PLAN, though we could do some special in-game tests of 
---             ALL our game mechanics once the JavaScript indicates that it all 
---             works.
---
---       TODO: Test move selection: you should not be able to move your king to 
---       a space that is under threat from an enemy. Spaces like that should not 
---       even light up.
+-- TODO: polish the code for indicating pieces that can't be safely moved (i.e. 
+--       moving the piece would leave your own king in check).
 --
 --       TODO: If a piece can't be safely moved, change its waypoint to a "lock" 
 --       icon.
---
---       TODO: At the start of the player's turn (i.e. in end_turn()), identify 
---       all pieces that have no legal moves, and disallow selecting them. If 
---       the piece has no valid moves (i.e. is_valid_move == 0 for all spaces; 
---       this is distinct from having valid moves but not being safely movable 
---       because it's blocking the king from being in check), then show a HUD 
---       message when the player attempts to control it: "There are no spaces 
---       you can move this Pawn to. Try another piece."
---
---        - If none of the player's pieces have legal moves, end the game. If 
---          the player is in check, then their enemy wins; if they're not in 
---          check, then it's a draw.
 --
 --       TODO: Consider making this a Custom Game option, i.e. something people 
 --       can disable so that players CAN move into check and promptly get owned 
@@ -73,11 +42,15 @@
 --
 --  - Piece selection (and the ability to re-select)
 --
+--     - You are blocked from making moves that would leave your king in check
+--
 --  - Target square selection
 --
 --  - Check and checkmate
 --
 --  - Victory conditions: checkmate; killing king
+--
+--  - Draw conditions: stalemate; 75-turn rule; insufficient materials
 --
 --  - Edge-case: turn clock runs out after you've selected a piece and gained 
 --    control
@@ -1237,14 +1210,6 @@ function prep_for_avoiding_self_check()
       -- be blocked).
       --
       for each object with label "board_space" do
-if current_object.piece_type == piece_type_pawn and current_object.coord_x == 5 and current_object.coord_y == 1 then
-   game.show_message_to(all_players, none, "Test pawn threatened by %n", current_object.threatened_by)
-   temp_int_00  = current_object.coord_x
-   temp_int_00 -= king.coord_x
-   temp_int_01  = current_object.coord_y
-   temp_int_01 -= king.coord_y
-   game.show_message_to(all_players, none, "Test pawn king-offset is %nx%n", temp_int_00, temp_int_01)
-end
          if current_object.threatened_by > 0 then
             current_object.space_flags |= space_flag_is_threatened_by_enemy -- is_valid_move -> flag
             --
@@ -1357,7 +1322,7 @@ end
                   end
                end
                --
-               if current_ally.coord_x != king.coord_x and current_ally.coord_y == king.coord_y then
+               if current_ally.coord_x != king.coord_x and current_ally.coord_y != king.coord_y then
                   alias diff_x = temp_int_01
                   alias nearest_opposite = temp_int_02
                   alias diff_y = temp_int_03
@@ -1365,14 +1330,10 @@ end
                   diff_x -= king.coord_x
                   diff_y  = current_ally.coord_y
                   diff_y -= king.coord_y
-if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(all_players, none, "Test pawn has diff %nx%n", diff_x, diff_y)
-end
                   if diff_y != diff_x then
                      diff_y *= -1
                   end
                   if diff_y == diff_x then
-game.show_message_to(all_players, none, "Ally %nx%n aligned with king", current_ally.coord_x, current_ally.coord_y)
                      --
                      -- The current_ally is on a diagonal with the king.
                      --
@@ -1397,9 +1358,6 @@ game.show_message_to(all_players, none, "Ally %nx%n aligned with king", current_
                               temp_y *= -1
                            end
                            if temp_y == temp_x then
-if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(all_players, none, "Space %nx%n aligned with king", current_object.coord_x, current_object.coord_y)
-end
                               --
                               -- The current_object is on a diagonal with the king; however, it 
                               -- may not be the same diagonal as current_ally. If we were to 
@@ -1422,9 +1380,6 @@ end
                                  temp_y *= -1
                               end
                               if temp_y == temp_x then
-if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(all_players, none, "Space %nx%n aligned with test pawn", current_object.coord_x, current_object.coord_y)
-end
                                  --
                                  -- The current_object is on a diagonal with both the king and 
                                  -- the current_ally. This means that they must be on the same 
@@ -1443,9 +1398,6 @@ end
                                  distance -= king.coord_x
                                  working  = distance
                                  working *= diff_sign
-if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(all_players, none, "Distance %n; working %n", distance, working)
-end
                                  if working > 0 then -- (current_object) is on the same side of (king) as (current_ally)
                                     distance  = current_ally.coord_y
                                     distance -= king.coord_y
