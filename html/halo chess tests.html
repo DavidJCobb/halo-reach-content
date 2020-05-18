@@ -1,6 +1,7 @@
 <!doctype html>
 <html>
    <head>
+      <meta charset="UTF-8" />
       <style>
 body{font-family:calibri,verdana,sans-serif}
 
@@ -34,6 +35,8 @@ body{display:flex;flex-flow:row nowrap}
       #chessboard .space.valid-move{border:2px solid #4FF}
       #chessboard .space.can-be-avenged{border:1px solid #E40}
          #chessboard .space[data-threatened-by]::after{content:attr(data-threatened-by);position:absolute;font-size:.75rem;top:.1rem;right:.1rem}
+      #chessboard .space[data-is-threatened-by-enemy]{box-shadow:inset 2rem 0 rgba(255, 32, 32, 0.3)}
+      #chessboard .space[data-moving-would-self-check]{box-shadow:inset 2rem 0 rgba(255, 192, 0, 0.3)!important}
 
 .tool-panel{
    border:1px solid #FFF;
@@ -47,7 +50,7 @@ body{display:flex;flex-flow:row nowrap}
    .tool-panel .title{display:block;padding:.25em .5em;text-align:center;font-weight:bold}
    #palette div{display:flex;flex-flow:row nowrap;padding:.25em .5em}
       .button-list{flex:0 0 auto;list-style:none;padding:0 1em 1em 1em;margin:0}
-         .button-list li{border:1px solid #886;background:#EEC;padding:.25em .5em;text-align:center;margin-bottom:.25em}
+         .button-list li{border:1px solid #887;background:#E2E0DA;padding:.25em .5em;text-align:center;margin-bottom:.25em}
          .button-list li{user-select:none;cursor:default}
          .button-list li:hover{border:1px solid #68A;background:#DEF}
          .button-list li.selected{border:1px solid #68A;background:#DEF}
@@ -86,6 +89,8 @@ body{display:flex;flex-flow:row nowrap}
                <li id="test-moves-black">Black Valid Moves</li>
                <li id="test-checkmate-white">White in Checkmate?</li>
                <li id="test-checkmate-black">Black in Checkmate?</li>
+               <li id="test-self-check-white">White Self-Checks</li>
+               <li id="test-self-check-black">Black Self-Checks</li>
             </ul>
          </div>
       </div>
@@ -128,6 +133,9 @@ class Space {
       this.is_valid_move = false;
       this.threatened_by = 0;
       this.en_passant_vulnerable = false; // pawns only; must be set on the turn the pawn double-moves, and cleared on its owner's next turn
+      //
+      this.is_threatened_by_enemy  = false;
+      this.moving_would_self_check = false;
    }
    describe() {
       if (this.piece_type == piece_type_none)
@@ -273,6 +281,8 @@ forEachSpaceDo(function(current_object) { // populate initial pieces
    }
 });
 
+//this.is_threatened_by_enemy  = false;
+//this.moving_would_self_check = false;
 function redrawChessboard() {
    let board = document.getElementById("chessboard");
    for(let i = 0; i < 64; ++i) {
@@ -282,6 +292,8 @@ function redrawChessboard() {
       let data = _spaces[y * 8 + x];
       node.setAttribute("data-piece-type", data.piece_type);
       node.setAttribute("data-owner",      data.owner);
+      node[data.is_threatened_by_enemy ? "setAttribute" : "removeAttribute"]("data-is-threatened-by-enemy", "true");
+      node[data.moving_would_self_check ? "setAttribute" : "removeAttribute"]("data-moving-would-self-check", "true");
    }
 }
 redrawChessboard();
@@ -684,6 +696,193 @@ document.getElementById("test-checkmate-white").addEventListener("click", functi
 });
 document.getElementById("test-checkmate-black").addEventListener("click", function(e) {
    checkmateTest(faction_black);
+});
+
+//this.is_threatened_by_enemy  = false;
+//this.moving_would_self_check = false;
+function selfCheckPrep(active_faction) {
+   forEachSpaceDo(function(current_object) { // clear piece/space movement flags
+      current_object.is_valid_move = false;
+      current_object.threatened_by = 0;
+      current_object.is_threatened_by_enemy  = false;
+      current_object.moving_would_self_check = false;
+   });
+   forEachSpaceDo(function(current_object) { // identify all enemy moves
+      if (current_object.piece_type != piece_type_none && current_object.owner != active_faction) {
+         checkValidMoves(current_object);
+      }
+   });
+   //
+   let king = no_object;
+   forEachSpaceDo(function(current_object) {
+      if (current_object.piece_type == piece_type_king && current_object.owner == active_faction) {
+         king = current_object;
+      }
+   });
+   if (king != no_object) {
+      forEachSpaceDo(function(current_object) {
+         if (current_object.threatened_by > 0) {
+            current_object.is_threatened_by_enemy = true;
+            //
+            if (current_object.piece_type != piece_type_none && current_object.piece_type != piece_type_king && current_object.owner == active_faction) {
+               let has_path_to_king = 1;
+               let current_ally     = current_object;
+               let nearest_enemy    = no_object;
+               //
+               if (current_ally.coord_y == king.coord_y) { // same row
+                  let diff_sign = current_ally.coord_x - king.coord_x;
+                  diff_sign = (diff_sign < 0) ? -1 : (diff_sign ? 1 : 0);
+                  //
+                  let nearest_opposite = 99;
+                  forEachSpaceDo(function(current_object) {
+                     if (current_object != current_ally && current_object != king && current_object.coord_y == current_ally.coord_y && current_object.piece_type != piece_type_none) {
+                        let distance = current_object.coord_x - king.coord_x;
+                        let working  = distance * diff_sign;
+                        if (working > 0) { // current_object is between current_ally and king
+                           distance  = current_ally.coord_y - king.coord_y;
+                           distance *= diff_sign;
+                           if (working < distance) {
+                              has_path_to_king = 0;
+                           }
+                           if (working > distance && working < nearest_opposite) {
+                              nearest_opposite = working;
+                              nearest_enemy    = no_object;
+                              if (current_object.piece_type == piece_type_queen
+                              || current_object.piece_type == piece_type_rook
+                              && current_object.owner != king.owner
+                              ) {
+                                 nearest_enemy = current_object;
+                              }
+                           }
+                        }
+                     }
+                  });
+               }
+               if (current_ally.coord_x == king.coord_x) { // same column
+                  let diff_sign = current_ally.coord_y - king.coord_y;
+                  diff_sign = (diff_sign < 0) ? -1 : (diff_sign ? 1 : 0);
+                  //
+                  let nearest_opposite = 99;
+                  forEachSpaceDo(function(current_object) {
+                     if (current_object != current_ally && current_object != king && current_object.coord_x == current_ally.coord_x && current_object.piece_type != piece_type_none) {
+                        let distance = current_object.coord_y - king.coord_y;
+                        let working  = distance * diff_sign;
+                        if (working > 0) { // current_object is between current_ally and king
+                           distance  = current_ally.coord_y - king.coord_y;
+                           distance *= diff_sign;
+                           if (working < distance) {
+                              has_path_to_king = 0;
+                           }
+                           if (working > distance && working < nearest_opposite) {
+                              nearest_opposite = working;
+                              nearest_enemy    = no_object;
+                              if (current_object.piece_type == piece_type_queen
+                              || current_object.piece_type == piece_type_rook
+                              && current_object.owner != king.owner
+                              ) {
+                                 nearest_enemy = current_object;
+                              }
+                           }
+                        }
+                     }
+                  });
+               }
+               //
+               if (current_ally.coord_x != king.coord_x && current_ally.coord_y != king.coord_y) {
+                  let diff_x = current_ally.coord_x - king.coord_x;
+                  let diff_y = current_ally.coord_y - king.coord_y;
+                  if (diff_y != diff_x)
+                     diff_y *= -1;
+                  if (diff_y == diff_x) { // current ally is diagonal with the king
+                     let diff_sign = current_ally.coord_x - king.coord_x;
+                     diff_sign = (diff_sign < 0) ? -1 : (diff_sign ? 1 : 0);
+                     //
+                     let nearest_opposite = 99;
+                     forEachSpaceDo(function(current_object) {
+                        if (current_object != current_ally && current_object != king && current_object.piece_type != piece_type_none) {
+                           let temp_x = current_object.coord_x - king.coord_x;
+                           let temp_y = current_object.coord_y - king.coord_y;
+                           if (temp_y != temp_x) {
+                              temp_y *= -1;
+                           }
+                           if (temp_y == temp_x) {
+                              //
+                              // The current_object is on a diagonal with the king; however, it 
+                              // may not be the same diagonal as current_ally. If we were to 
+                              // stop our checks here, we'd false-positive in the following case:
+                              //
+                              // ░▓░▓░▓░▓ Uppercase: enemy; lowercase: ally
+                              // ▓░▓░▓R▓░
+                              // ░▓░▓░▓░▓
+                              // ▓░▓k▓░▓░ Allied king shares NE/SW diagonal with enemy rook
+                              // ░▓░▓░▓░▓
+                              // ▓░▓░▓░▓░
+                              // ░▓░▓░▓p▓ Allied pawn shares NW/SE diagonal with allied king
+                              // ▓░▓░▓░▓░
+                              //
+                              temp_x  = current_object.coord_x;
+                              temp_x -= current_ally.coord_x;
+                              temp_y  = current_object.coord_y;
+                              temp_y -= current_ally.coord_y;
+                              if (temp_y != temp_x) {
+                                 temp_y *= -1;
+                              }
+                              if (temp_y == temp_x) {
+                                 //
+                                 // The current_object is on a diagonal with both the king and 
+                                 // the current_ally. This means that they must be on the same 
+                                 // diagonal: one piece must be physically between the others 
+                                 // along that diagonal.
+                                 //
+                                 // From this point, we only need to check one axis, so we can 
+                                 // treat this the same as we would pieces on a cardinal axis. 
+                                 // The only difference is that we need to check for an enemy 
+                                 // bishop instead of an enemy rook. Let's copy the code for 
+                                 // pieces that share a row.
+                                 //
+                                 let distance = current_object.coord_x - king.coord_x;
+                                 let working  = distance * diff_sign;
+                                 if (working > 0) { // current_object is between current_ally and king
+                                    distance  = current_ally.coord_y - king.coord_y;
+                                    distance *= diff_sign;
+                                    if (working < distance) {
+                                       has_path_to_king = 0;
+                                    }
+                                    if (working > distance && working < nearest_opposite) {
+                                       nearest_opposite = working;
+                                       nearest_enemy    = no_object;
+                                       if (current_object.piece_type == piece_type_queen
+                                       || current_object.piece_type == piece_type_bishop
+                                       && current_object.owner != king.owner
+                                       ) {
+                                          nearest_enemy = current_object;
+                                       }
+                                    }
+                                 }
+                              }
+                           }
+                        }
+                     });
+                  }
+               }
+               //
+               // All tests done for current_ally.
+               //
+               if (has_path_to_king == 1 && nearest_enemy != no_object) {
+                  current_ally.moving_would_self_check = true;
+               }
+            }
+         }
+      });
+   }
+}
+document.getElementById("test-self-check-white").addEventListener("click", function(e) {
+   selfCheckPrep(faction_white);
+   redrawChessboard();
+});
+document.getElementById("test-self-check-black").addEventListener("click", function(e) {
+   selfCheckPrep(faction_black);
+   redrawChessboard();
 });
 
       </script>

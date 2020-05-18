@@ -21,6 +21,14 @@
 --       that cannot be moved without leaving you in check. Attempting to do so 
 --       should show a HUD widget explaining that you can't.
 --
+--        = This will likely require forcing the board to a special configuration 
+--          at round start. Alternatively we could try porting the logic 1:1 from 
+--          Megalo to JavaScript again.
+--
+--           - I LIKE THIS PLAN, though we could do some special in-game tests of 
+--             ALL our game mechanics once the JavaScript indicates that it all 
+--             works.
+--
 --       TODO: Test move selection: you should not be able to move your king to 
 --       a space that is under threat from an enemy. Spaces like that should not 
 --       even light up.
@@ -36,14 +44,15 @@
 --       message when the player attempts to control it: "There are no spaces 
 --       you can move this Pawn to. Try another piece."
 --
--- TODO: draw if a player has no legal moves but is not in check
+--        - If none of the player's pieces have legal moves, end the game. If 
+--          the player is in check, then their enemy wins; if they're not in 
+--          check, then it's a draw.
+--
+--       TODO: Consider making this a Custom Game option, i.e. something people 
+--       can disable so that players CAN move into check and promptly get owned 
+--       for it.
 --
 -- TODO: pawn promotion
---
--- TODO: if a team has no players, skip its turn, optionally with a short delay 
---       and a UI message (clearly indicate the code; we only want this for 
---       testing, and we may try to replace it with letting a single player 
---       control both sides of the board)
 --
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
@@ -56,6 +65,11 @@
 -- TODO: spawning the player into a Monitor after a move: i think official halo 
 --       chess uses an offset of (-15, 0, 15); try that and see if it's consistent 
 --       with gameplay videos. (currently we do (0, 0, 6).)
+--
+-- TODO: if a team has no players, skip its turn, optionally with a short delay 
+--       and a UI message (clearly indicate the code; we only want this for 
+--       testing, and we may try to replace it with letting a single player 
+--       control both sides of the board)
 --
 -- DONE:
 --
@@ -1096,6 +1110,7 @@ function prep_for_avoiding_self_check()
    end
    --
    alias king = temp_obj_00
+   king = no_object;
    for each object with label "board_space" do
       if current_object.piece_type == piece_type_king and current_object.owner == active_faction then
          king = current_object
@@ -1173,7 +1188,11 @@ function prep_for_avoiding_self_check()
                   alias nearest_opposite = temp_int_02
                   nearest_opposite = 99
                   for each object with label "board_space" do
-                     if current_object.coord_y == current_ally.coord_y and current_object.piece_type != piece_type_none then
+                     if  current_object != current_ally
+                     and current_object != king
+                     and current_object.coord_y == current_ally.coord_y
+                     and current_object.piece_type != piece_type_none
+                     then
                         alias distance = temp_int_03
                         alias working  = temp_int_04
                         distance  = current_object.coord_x
@@ -1181,11 +1200,13 @@ function prep_for_avoiding_self_check()
                         working  = distance
                         working *= diff_sign
                         if working > 0 then -- current_object is between current_ally and king
-                           has_path_to_king = 0
-                        end
-                        if working < 0 then -- king is between current_object and current_ally
-                           working *= -1
-                           if working < nearest_opposite then
+                           distance  = current_ally.coord_y
+                           distance -= king.coord_y
+                           distance *= diff_sign
+                           if working < distance then
+                              has_path_to_king = 0
+                           end
+                           if working > distance and working < nearest_opposite then
                               nearest_opposite = working
                               nearest_enemy    = no_object
                               if  current_object.piece_type == piece_type_queen
@@ -1213,7 +1234,11 @@ function prep_for_avoiding_self_check()
                   alias nearest_opposite = temp_int_02
                   nearest_opposite = 99
                   for each object with label "board_space" do
-                     if current_object.coord_x == current_ally.coord_x and current_object.piece_type != piece_type_none then
+                     if  current_object != current_ally
+                     and current_object != king
+                     and current_object.coord_x == current_ally.coord_x
+                     and current_object.piece_type != piece_type_none
+                     then
                         alias distance = temp_int_03
                         alias working  = temp_int_04
                         distance  = current_object.coord_y
@@ -1221,11 +1246,13 @@ function prep_for_avoiding_self_check()
                         working  = distance
                         working *= diff_sign
                         if working > 0 then -- current_object is between current_ally and king
-                           has_path_to_king = 0
-                        end
-                        if working < 0 then -- king is between current_object and current_ally
-                           working *= -1
-                           if working < nearest_opposite then
+                           distance  = current_ally.coord_y
+                           distance -= king.coord_y
+                           distance *= diff_sign
+                           if working < distance then
+                              has_path_to_king = 0
+                           end
+                           if working > distance and working < nearest_opposite then
                               nearest_opposite = working
                               nearest_enemy    = no_object
                               if  current_object.piece_type == piece_type_queen
@@ -1240,7 +1267,7 @@ function prep_for_avoiding_self_check()
                   end
                end
                --
-               if current_ally.coord_x != king.coord_x and current_ally.coord_x == king.coord_x then
+               if current_ally.coord_x != king.coord_x and current_ally.coord_y == king.coord_y then
                   alias diff_x = temp_int_01
                   alias nearest_opposite = temp_int_02
                   alias diff_y = temp_int_03
@@ -1255,83 +1282,88 @@ function prep_for_avoiding_self_check()
                      --
                      -- The current_ally is on a diagonal with the king.
                      --
+                     alias diff_sign = temp_int_01
+                     diff_sign  = current_ally.coord_x
+                     diff_sign -= king.coord_x
+                     --
+                     -- Convert to -1, 0, or 1:
+                     --
+                     diff_sign >>= 15 -- to sign bit
+                     diff_sign *= -2
+                     diff_sign += 1
+                     --
                      nearest_opposite = 99
                      for each object with label "board_space" do
-                        alias temp_x = diff_y
-                        alias temp_y = temp_int_04
-                        temp_x  = current_object.coord_x
-                        temp_x -= king.coord_x
-                        temp_y  = current_object.coord_y
-                        temp_y -= king.coord_y
-                        if temp_y != temp_x then
-                           temp_y *= -1
-                        end
-                        if temp_y == temp_x then
-                           --
-                           -- The current_object is on a diagonal with the king; however, it 
-                           -- may not be the same diagonal as current_ally. If we were to 
-                           -- stop our checks here, we'd false-positive in the following case:
-                           --
-                           -- ░▓░▓░▓░▓ Uppercase: enemy; lowercase: ally
-                           -- ▓░▓░▓R▓░
-                           -- ░▓░▓░▓░▓
-                           -- ▓░▓k▓░▓░ Allied king shares NE/SW diagonal with enemy rook
-                           -- ░▓░▓░▓░▓
-                           -- ▓░▓░▓░▓░
-                           -- ░▓░▓░▓p▓ Allied pawn shares NW/SE diagonal with allied king
-                           -- ▓░▓░▓░▓░
-                           --
+                        if  current_object != current_ally
+                        and current_object != king
+                        and current_object.piece_type != piece_type_none
+                        then
+                           alias temp_x = diff_y
+                           alias temp_y = temp_int_04
                            temp_x  = current_object.coord_x
-                           temp_x -= current_ally.coord_x
+                           temp_x -= king.coord_x
                            temp_y  = current_object.coord_y
-                           temp_y -= current_ally.coord_y
+                           temp_y -= king.coord_y
                            if temp_y != temp_x then
                               temp_y *= -1
                            end
                            if temp_y == temp_x then
                               --
-                              -- The current_object is on a diagonal with both the king and 
-                              -- the current_ally. This means that they must be on the same 
-                              -- diagonal: one piece must be physically between the others 
-                              -- along that diagonal.
+                              -- The current_object is on a diagonal with the king; however, it 
+                              -- may not be the same diagonal as current_ally. If we were to 
+                              -- stop our checks here, we'd false-positive in the following case:
                               --
-                              -- From this point, we only need to check one axis, so we can 
-                              -- treat this the same as we would pieces on a cardinal axis. 
-                              -- The only difference is that we need to check for an enemy 
-                              -- bishop instead of an enemy rook. Let's copy the code for 
-                              -- pieces that share a row.
+                              -- ░▓░▓░▓░▓ Uppercase: enemy; lowercase: ally
+                              -- ▓░▓░▓R▓░
+                              -- ░▓░▓░▓░▓
+                              -- ▓░▓k▓░▓░ Allied king shares NE/SW diagonal with enemy rook
+                              -- ░▓░▓░▓░▓
+                              -- ▓░▓░▓░▓░
+                              -- ░▓░▓░▓p▓ Allied pawn shares NW/SE diagonal with allied king
+                              -- ▓░▓░▓░▓░
                               --
-                              alias diff_sign = temp_int_01
-                              diff_sign  = current_ally.coord_x
-                              diff_sign -= king.coord_x
-                              --
-                              -- Convert to -1, 0, or 1:
-                              --
-                              diff_sign >>= 15 -- to sign bit
-                              diff_sign *= -2
-                              diff_sign += 1
-                              --
-                              alias nearest_opposite = temp_int_02
-                              nearest_opposite = 99
-                              alias distance = temp_int_03
-                              alias working  = temp_int_04
-                              distance  = current_object.coord_x
-                              distance -= king.coord_x
-                              working  = distance
-                              working *= diff_sign
-                              if working > 0 then -- current_object is between current_ally and king
-                                 has_path_to_king = 0
+                              temp_x  = current_object.coord_x
+                              temp_x -= current_ally.coord_x
+                              temp_y  = current_object.coord_y
+                              temp_y -= current_ally.coord_y
+                              if temp_y != temp_x then
+                                 temp_y *= -1
                               end
-                              if working < 0 then -- king is between current_object and current_ally
-                                 working *= -1
-                                 if working < nearest_opposite then
-                                    nearest_opposite = working
-                                    nearest_enemy    = no_object
-                                    if  current_object.piece_type == piece_type_queen
-                                    or  current_object.piece_type == piece_type_bishop
-                                    and current_object.owner != king.owner
-                                    then
-                                       nearest_enemy = current_object
+                              if temp_y == temp_x then
+                                 --
+                                 -- The current_object is on a diagonal with both the king and 
+                                 -- the current_ally. This means that they must be on the same 
+                                 -- diagonal: one piece must be physically between the others 
+                                 -- along that diagonal.
+                                 --
+                                 -- From this point, we only need to check one axis, so we can 
+                                 -- treat this the same as we would pieces on a cardinal axis. 
+                                 -- The only difference is that we need to check for an enemy 
+                                 -- bishop instead of an enemy rook. Let's copy the code for 
+                                 -- pieces that share a row.
+                                 --
+                                 alias distance = temp_int_03
+                                 alias working  = temp_int_04
+                                 distance  = current_object.coord_x
+                                 distance -= king.coord_x
+                                 working  = distance
+                                 working *= diff_sign
+                                 if working > 0 then -- current_object is between current_ally and king
+                                    distance  = current_ally.coord_y
+                                    distance -= king.coord_y
+                                    distance *= diff_sign
+                                    if working < distance then
+                                       has_path_to_king = 0
+                                    end
+                                    if working > distance and working < nearest_opposite then
+                                       nearest_opposite = working
+                                       nearest_enemy    = no_object
+                                       if  current_object.piece_type == piece_type_queen
+                                       or  current_object.piece_type == piece_type_rook
+                                       and current_object.owner != king.owner
+                                       then
+                                          nearest_enemy = current_object
+                                       end
                                     end
                                  end
                               end
@@ -1574,7 +1606,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          current_object.set_shape_visibility(no_one)
          if current_object.is_valid_move == 1 then
             temp_int_00 = 0
-            if selected_space.piece_type == piece_type_king then
+            if selected_piece.piece_type == piece_type_king then
                temp_int_00  = current_object.space_flags
                temp_int_00 &= space_flag_is_threatened_by_enemy
             end
