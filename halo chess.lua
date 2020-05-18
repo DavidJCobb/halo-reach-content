@@ -520,7 +520,8 @@ for each object with label "board_space_extra" do -- generate missing bipeds
       alias face  = temp_obj_02
       --
       if winning_faction == faction_none and extra.biped != no_object and cell != selected_piece and not cell.shape_contains(extra.biped) then
-         extra.biped.delete()
+         extra.biped.attach_to(cell, 0, 0, 1, relative)
+         extra.biped.detach()
       end
       if extra.biped == no_object then
          if cell.piece_type != piece_type_none then
@@ -696,21 +697,19 @@ do -- UI
       ui_your_turn.set_visibility(active_player, true)
       if active_player.ui_would_self_check != 0 then
          ui_bad_move.set_visibility(active_player, true)
-         temp_obj_00 = active_player.target_space
-         temp_int_00 = temp_obj_00.piece_type
-         if temp_int_00 == piece_type_pawn then
+         if active_player.ui_would_self_check == piece_type_pawn then
             ui_bad_move.set_text("You cannot move this Pawn. Doing so would place your King in check. Try another piece.")
          end
-         if temp_int_00 == piece_type_rook then
+         if active_player.ui_would_self_check == piece_type_rook then
             ui_bad_move.set_text("You cannot move this Rook. Doing so would place your King in check. Try another piece.")
          end
-         if temp_int_00 == piece_type_knight then
+         if active_player.ui_would_self_check == piece_type_knight then
             ui_bad_move.set_text("You cannot move this Knight. Doing so would place your King in check. Try another piece.")
          end
-         if temp_int_00 == piece_type_queen then
+         if active_player.ui_would_self_check == piece_type_queen then
             ui_bad_move.set_text("You cannot move this Queen. Doing so would place your King in check. Try another piece.")
          end
-         if temp_int_00 == piece_type_bishop then
+         if active_player.ui_would_self_check == piece_type_bishop then
             ui_bad_move.set_text("You cannot move this Bishop. Doing so would place your King in check. Try another piece.")
          end
       end
@@ -1255,16 +1254,23 @@ function prep_for_avoiding_self_check()
                current_ally  = current_object
                nearest_enemy = no_object
                --
+               function _to_sign()
+                  alias diff_sign = temp_int_01
+                  if diff_sign != 0 then
+                     if diff_sign > 0 then
+                        diff_sign = 1
+                     end
+                     if diff_sign < 0 then
+                        diff_sign = -1
+                     end
+                  end
+               end
+               --
                if current_ally.coord_y == king.coord_y then -- left or right
                   alias diff_sign = temp_int_01
                   diff_sign  = current_ally.coord_x
                   diff_sign -= king.coord_x
-                  --
-                  -- Convert to -1, 0, or 1:
-                  --
-                  diff_sign >>= 15 -- to sign bit
-                  diff_sign *= -2
-                  diff_sign += 1
+                  _to_sign()
                   --
                   alias nearest_opposite = temp_int_02
                   nearest_opposite = 99
@@ -1280,7 +1286,7 @@ function prep_for_avoiding_self_check()
                         distance -= king.coord_x
                         working  = distance
                         working *= diff_sign
-                        if working > 0 then -- current_object is between current_ally and king
+                        if working > 0 then -- (current_object) is on the same side of (king) as (current_ally)
                            distance  = current_ally.coord_y
                            distance -= king.coord_y
                            distance *= diff_sign
@@ -1305,12 +1311,7 @@ function prep_for_avoiding_self_check()
                   alias diff_sign = temp_int_01
                   diff_sign  = current_ally.coord_y
                   diff_sign -= king.coord_y
-                  --
-                  -- Convert to -1, 0, or 1:
-                  --
-                  diff_sign >>= 15 -- to sign bit
-                  diff_sign *= -2
-                  diff_sign += 1
+                  _to_sign()
                   --
                   alias nearest_opposite = temp_int_02
                   nearest_opposite = 99
@@ -1326,7 +1327,7 @@ function prep_for_avoiding_self_check()
                         distance -= king.coord_y
                         working  = distance
                         working *= diff_sign
-                        if working > 0 then -- current_object is between current_ally and king
+                        if working > 0 then -- (current_object) is on the same side of (king) as (current_ally)
                            distance  = current_ally.coord_y
                            distance -= king.coord_y
                            distance *= diff_sign
@@ -1366,12 +1367,7 @@ function prep_for_avoiding_self_check()
                      alias diff_sign = temp_int_01
                      diff_sign  = current_ally.coord_x
                      diff_sign -= king.coord_x
-                     --
-                     -- Convert to -1, 0, or 1:
-                     --
-                     diff_sign >>= 15 -- to sign bit
-                     diff_sign *= -2
-                     diff_sign += 1
+                     _to_sign()
                      --
                      nearest_opposite = 99
                      for each object with label "board_space" do
@@ -1389,6 +1385,9 @@ function prep_for_avoiding_self_check()
                               temp_y *= -1
                            end
                            if temp_y == temp_x then
+if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
+   game.show_message_to(active_player, none, "Space %nx%n aligned with king", current_object.coord_x, current_object.coord_y)
+end
                               --
                               -- The current_object is on a diagonal with the king; however, it 
                               -- may not be the same diagonal as current_ally. If we were to 
@@ -1411,6 +1410,9 @@ function prep_for_avoiding_self_check()
                                  temp_y *= -1
                               end
                               if temp_y == temp_x then
+if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
+   game.show_message_to(active_player, none, "Space %nx%n aligned with test pawn", current_object.coord_x, current_object.coord_y)
+end
                                  --
                                  -- The current_object is on a diagonal with both the king and 
                                  -- the current_ally. This means that they must be on the same 
@@ -1429,7 +1431,10 @@ function prep_for_avoiding_self_check()
                                  distance -= king.coord_x
                                  working  = distance
                                  working *= diff_sign
-                                 if working > 0 then -- current_object is between current_ally and king
+if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
+   game.show_message_to(active_player, none, "Distance %n; working %n", distance, working)
+end
+                                 if working > 0 then -- (current_object) is on the same side of (king) as (current_ally)
                                     distance  = current_ally.coord_y
                                     distance -= king.coord_y
                                     distance *= diff_sign
@@ -1440,7 +1445,7 @@ function prep_for_avoiding_self_check()
                                        nearest_opposite = working
                                        nearest_enemy    = no_object
                                        if  current_object.piece_type == piece_type_queen
-                                       or  current_object.piece_type == piece_type_rook
+                                       or  current_object.piece_type == piece_type_bishop
                                        and current_object.owner != king.owner
                                        then
                                           nearest_enemy = current_object
@@ -1681,9 +1686,9 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
             alias cannot_move = temp_int_00
             cannot_move  = current_object.space_flags
             cannot_move &= space_flag_mask_cannot_move
-            active_player.ui_would_self_check |= current_object.space_flags
-            active_player.ui_would_self_check &= space_flag_moving_would_self_check
+            active_player.ui_would_self_check = current_object.piece_type
             if cannot_move == 0 then
+               active_player.ui_would_self_check = 0
                current_object.set_shape_visibility(everyone)
                active_player.target_space = current_object
                if prior_space != current_object then
