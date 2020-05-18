@@ -9,15 +9,8 @@
 --
 
 --
--- TODO: polish the code for indicating pieces that can't be safely moved (i.e. 
---       moving the piece would leave your own king in check).
---
---       TODO: If a piece can't be safely moved, change its waypoint to a "lock" 
---       icon.
---
---       TODO: Consider making this a Custom Game option, i.e. something people 
---       can disable so that players CAN move into check and promptly get owned 
---       for it.
+-- TODO: consider adding a script option which controls whether you're allowed 
+--       to put yourself in check.
 --
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
@@ -35,6 +28,8 @@
 --       and a UI message (clearly indicate the code; we only want this for 
 --       testing, and we may try to replace it with letting a single player 
 --       control both sides of the board)
+--
+-- TODO: trigger to delete dropped flags.
 --
 -- DONE:
 --
@@ -62,6 +57,7 @@ alias opt_turn_clock = script_option[0]
 alias species_black  = script_option[1]
 alias species_white  = script_option[2]
 alias opt_draw_rule  = script_option[3]
+alias opt_dim_immovable_piece_waypoints = script_option[4]
 
 alias faction_none  = 0
 alias faction_black = 2 -- north
@@ -122,6 +118,9 @@ alias extra  = object.object[1] -- link biped to extra
 --
 -- Board center data:
 alias piece_deselect_boundary = object.object[0]
+--
+-- State for the kings' flags:
+alias flag_was_processed = object.is_script_created
 
 -- Global state
 alias temp_int_00     = global.number[0]
@@ -184,6 +183,8 @@ alias ui_in_check   = script_widget[1]
 alias ui_bad_move   = script_widget[2]
 alias ui_turn_clock = script_widget[3]
 alias ui_endgame    = script_widget[3] -- multi-purpose widget
+
+alias all_flags = 2 -- forge label
 
 --
 -- SCRIPT FLOW:
@@ -411,13 +412,6 @@ for each object with label "board_space_extra" do -- generate missing bipeds
    alias extra = current_object
    --
    cell = extra.marker
-   extra.biped.set_waypoint_visibility(allies)
-   --if cell.piece_type == piece_type_queen
-   --or cell.piece_type == piece_type_king
-   --then
-   --   extra.biped.set_waypoint_visibility(everyone)
-   --end
-   --
    if winning_faction == faction_none or winning_faction == cell.owner then
       alias biped = temp_obj_01
       alias face  = temp_obj_02
@@ -538,7 +532,18 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.set_waypoint_icon(crown)
                biped.set_waypoint_text("King")
                biped.add_weapon(flag, primary)
-               -- TODO: set flag color by assigning its team
+               --
+               for each object with label all_flags do -- set flag color by assigning its team
+                  --
+                  -- The object.get_carrier opcode can only return a player, so we have to do 
+                  -- it this way:
+                  --
+                  if current_object.flag_was_processed == 0 then
+                     current_object.flag_was_processed = 1
+                     current_object.team = neutral_team -- best fallback we can do for single-player matches where the other team is absent
+                     current_object.team = biped.team
+                  end
+               end
             end
             --
             biped.attach_to(cell, 0, 0, 1, relative) -- enforce position (TODO: should we leave it attached?)
@@ -546,6 +551,29 @@ for each object with label "board_space_extra" do -- generate missing bipeds
             extra.biped  = biped
             biped.extra  = extra
             biped.marker = cell
+         end
+      end
+   end
+end
+for each object with label "board_space_extra" do -- manage piece waypoint visibility
+   alias extra = current_object
+   if extra.biped != no_object then
+      extra.biped.set_waypoint_visibility(allies)
+      extra.biped.set_waypoint_priority(normal)
+      --
+      if winning_faction == faction_none and opt_dim_immovable_piece_waypoints == 1 then
+         --
+         -- During a player's turn, fade the waypoints on allied pieces that cannot 
+         -- be moved.
+         --
+         alias cell = temp_obj_00
+         cell = extra.marker
+         if active_faction == cell.owner then
+            temp_int_00  = cell.space_flags
+            temp_int_00 &= space_flag_mask_cannot_move
+            if temp_int_00 != 0 then
+               extra.biped.set_waypoint_priority(low)
+            end
          end
       end
    end
@@ -1566,8 +1594,20 @@ end
 if winning_faction == faction_none then -- handle picking a piece and handle making a move
    turn_clock.set_rate(-100%)
    if active_faction == faction_none then
-      active_faction = faction_white
-      active_team    = team_white
+      --
+      -- We want White Team to move first, but there's a lot of state that we only 
+      -- set up at the end of a turn... so tell the game it's Black Team's turn and 
+      -- then immediately end the turn.
+      --
+      active_faction = faction_black
+      active_team    = team_black
+      temp_int_00  = game.current_round
+      temp_int_00 %= 2
+      if temp_int_00 == 0 then -- actually, every round we should alternate who gets to move first
+         active_faction = faction_white
+         active_team    = team_white
+      end
+      end_turn()
    end
    if active_player != no_player and active_player.killer_type_is(quit) and active_player.team.has_any_players() then -- handle active player quitting
       turn_clock.reset()
