@@ -1237,6 +1237,14 @@ function prep_for_avoiding_self_check()
       -- be blocked).
       --
       for each object with label "board_space" do
+if current_object.piece_type == piece_type_pawn and current_object.coord_x == 5 and current_object.coord_y == 1 then
+   game.show_message_to(all_players, none, "Test pawn threatened by %n", current_object.threatened_by)
+   temp_int_00  = current_object.coord_x
+   temp_int_00 -= king.coord_x
+   temp_int_01  = current_object.coord_y
+   temp_int_01 -= king.coord_y
+   game.show_message_to(all_players, none, "Test pawn king-offset is %nx%n", temp_int_00, temp_int_01)
+end
          if current_object.threatened_by > 0 then
             current_object.space_flags |= space_flag_is_threatened_by_enemy -- is_valid_move -> flag
             --
@@ -1357,10 +1365,14 @@ function prep_for_avoiding_self_check()
                   diff_x -= king.coord_x
                   diff_y  = current_ally.coord_y
                   diff_y -= king.coord_y
+if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
+   game.show_message_to(all_players, none, "Test pawn has diff %nx%n", diff_x, diff_y)
+end
                   if diff_y != diff_x then
                      diff_y *= -1
                   end
                   if diff_y == diff_x then
+game.show_message_to(all_players, none, "Ally %nx%n aligned with king", current_ally.coord_x, current_ally.coord_y)
                      --
                      -- The current_ally is on a diagonal with the king.
                      --
@@ -1386,7 +1398,7 @@ function prep_for_avoiding_self_check()
                            end
                            if temp_y == temp_x then
 if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(active_player, none, "Space %nx%n aligned with king", current_object.coord_x, current_object.coord_y)
+   game.show_message_to(all_players, none, "Space %nx%n aligned with king", current_object.coord_x, current_object.coord_y)
 end
                               --
                               -- The current_object is on a diagonal with the king; however, it 
@@ -1411,7 +1423,7 @@ end
                               end
                               if temp_y == temp_x then
 if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(active_player, none, "Space %nx%n aligned with test pawn", current_object.coord_x, current_object.coord_y)
+   game.show_message_to(all_players, none, "Space %nx%n aligned with test pawn", current_object.coord_x, current_object.coord_y)
 end
                                  --
                                  -- The current_object is on a diagonal with both the king and 
@@ -1432,7 +1444,7 @@ end
                                  working  = distance
                                  working *= diff_sign
 if current_ally.piece_type == piece_type_pawn and current_ally.coord_x == 5 then
-   game.show_message_to(active_player, none, "Distance %n; working %n", distance, working)
+   game.show_message_to(all_players, none, "Distance %n; working %n", distance, working)
 end
                                  if working > 0 then -- (current_object) is on the same side of (king) as (current_ally)
                                     distance  = current_ally.coord_y
@@ -1684,11 +1696,15 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          current_object.set_shape_visibility(no_one)
          if current_object.owner == active_faction and current_object.shape_contains(active_player.biped) then
             alias cannot_move = temp_int_00
+            alias flag_check  = temp_int_01
             cannot_move  = current_object.space_flags
             cannot_move &= space_flag_mask_cannot_move
-            active_player.ui_would_self_check = current_object.piece_type
+            flag_check   = current_object.space_flags
+            flag_check  &= space_flag_moving_would_self_check
+            if flag_check != 0 then
+               active_player.ui_would_self_check = current_object.piece_type
+            end
             if cannot_move == 0 then
-               active_player.ui_would_self_check = 0
                current_object.set_shape_visibility(everyone)
                active_player.target_space = current_object
                if prior_space != current_object then
