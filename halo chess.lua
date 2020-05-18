@@ -15,8 +15,6 @@
 --        - if the player has no permitted moves, and there is no time limit on 
 --          turns, then this will softlock. how do we deal with that?
 --
---        - working on it; see prep_for_avoiding_self_check() below
---
 --       TODO: Test piece selection: you should not be able to select a piece 
 --       that cannot be moved without leaving you in check. Attempting to do so 
 --       should show a HUD widget explaining that you can't.
@@ -91,6 +89,7 @@ alias opt_turn_clock = script_option[0]
 alias species_black  = script_option[1]
 alias species_white  = script_option[2]
 alias opt_draw_rule  = script_option[3]
+alias opt_debug_arrange = script_option[4]
 
 alias faction_none  = 0
 alias faction_black = 2 -- north
@@ -131,6 +130,9 @@ alias en_passant_vulnerable = object.number[6] -- pawns only; must be set on the
 alias space_flags   = object.number[7]
 alias space_flag_moving_would_self_check = 0x0001 -- moving this piece would put you in check
 alias space_flag_is_threatened_by_enemy  = 0x0002 -- you cannot move your king here; this space is under threat by an enemy
+alias space_flag_has_no_valid_moves      = 0x0004
+alias space_flag_has_no_valid_moves_clear = 0x7FFB
+alias space_flag_mask_cannot_move        = 0x0005 -- space_flag_moving_would_self_check | space_flag_has_no_valid_moves
 alias space_left    = object.object[0]
 alias space_right   = object.object[1]
 alias space_above   = object.object[2]
@@ -421,6 +423,47 @@ if board_created == 0 then -- generate board
          end
       end
       --
+if opt_debug_arrange == 1 then
+   --
+   -- Uppercase: black; lowercase: white
+   --
+   -- RNBQKBNR
+   -- PPPPBPPP -- Moving the bishop in this row would self-check
+   -- ░▓░▓░▓░▓
+   -- ▓░▓░r░▓░
+   -- ░▓░▓░▓░▓
+   -- ▓░▓░▓░▓░
+   -- pppppppp
+   -- rnbqkbnr
+   --
+   if current_object.coord_x == 4 then
+      if current_object.coord_y == 1 then
+         current_object.piece_type = piece_type_bishop
+      end
+      if current_object.coord_y == 3 then
+         current_object.piece_type = piece_type_rook
+         current_object.owner = faction_white
+      end
+   end
+end
+if opt_debug_arrange == 2 then
+   --
+   -- Uppercase: black; lowercase: white
+   --
+   -- RNBQKBNR
+   -- PPPPBPPP -- Moving the pawn in front of the queen would self-check
+   -- ░▓░▓░▓░▓
+   -- ▓░▓░▓░▓░
+   -- b▓░▓░▓░▓
+   -- ▓░▓░▓░▓░
+   -- pppppppp
+   -- rnbqkbnr
+   --
+   if current_object.coord_x == 0 and current_object.coord_y == 4 then
+      current_object.piece_type = piece_type_bishop
+      current_object.owner = faction_white
+   end
+end
       if current_object.piece_type != piece_type_none then
          if current_object.coord_y <= 1 then
             current_object.owner = faction_black
@@ -429,6 +472,34 @@ if board_created == 0 then -- generate board
             current_object.owner = faction_white
          end
       end
+if opt_debug_arrange == 3 then
+   --
+   -- Uppercase: black; lowercase: white
+   --
+   -- ░▓░▓░▓░K -- black is in stalemate
+   -- ▓░▓░▓k▓░
+   -- ░▓░▓░▓q▓
+   -- ▓░▓░▓░▓░
+   -- ░▓░▓░▓░▓
+   -- ▓░▓░▓░▓░
+   -- ░▓░▓░▓░▓
+   -- ▓░▓░▓░▓░
+   --
+   current_object.piece_type = piece_type_none
+   current_object.owner = faction_none
+   if current_object.coord_x == 7 and current_object.coord_y == 0 then
+      current_object.piece_type = piece_type_king
+      current_object.owner = faction_black
+   end
+   if current_object.coord_x == 6 and current_object.coord_y == 2 then
+      current_object.piece_type = piece_type_queen
+      current_object.owner = faction_white
+   end
+   if current_object.coord_x == 5 and current_object.coord_y == 1 then
+      current_object.piece_type = piece_type_king
+      current_object.owner = faction_white
+   end
+end
    end
 end
 
@@ -623,7 +694,7 @@ do -- UI
          end
       end
       ui_your_turn.set_visibility(active_player, true)
-      if active_player.ui_would_self_check == 1 then
+      if active_player.ui_would_self_check != 0 then
          ui_bad_move.set_visibility(active_player, true)
          temp_obj_00 = active_player.target_space
          temp_int_00 = temp_obj_00.piece_type
@@ -643,6 +714,16 @@ do -- UI
             ui_bad_move.set_text("You cannot move this Bishop. Doing so would place your King in check. Try another piece.")
          end
       end
+   end
+end
+
+function do_endgame_ui_visibility()
+   for each player do
+      ui_your_turn.set_visibility(current_player, false)
+      ui_in_check.set_visibility(current_player, false)
+      ui_bad_move.set_visibility(current_player, false)
+      -- ui_turn_clock and ui_endgame are the same widget
+      ui_endgame.set_visibility(current_player, true)
    end
 end
 
@@ -1110,7 +1191,7 @@ function prep_for_avoiding_self_check()
    end
    --
    alias king = temp_obj_00
-   king = no_object;
+   king = no_object
    for each object with label "board_space" do
       if current_object.piece_type == piece_type_king and current_object.owner == active_faction then
          king = current_object
@@ -1466,6 +1547,62 @@ function end_turn()
       end
       if winning_faction == faction_none then -- not in checkmate
          prep_for_avoiding_self_check()
+         --
+         -- Check whether the player has any valid moves.
+         --
+         alias has_movable_pieces = temp_int_02
+         alias is_king            = temp_int_03
+         has_movable_pieces = 0
+         for each object with label "board_space" do
+            current_object.space_flags &= space_flag_has_no_valid_moves_clear
+            if current_object.piece_type != piece_type_none and current_object.owner == active_faction then
+               temp_int_00  = current_object.space_flags
+               temp_int_00 &= space_flag_moving_would_self_check
+               if temp_int_00 == 0 then
+                  temp_obj_00 = current_object -- argument
+                  for each object with label "board_space" do
+                     current_object.is_valid_move = 0
+                     current_object.threatened_by = 0
+                  end
+                  check_valid_move()
+                  --
+                  alias piece_can_move = temp_int_00
+                  piece_can_move = 0
+                  is_king        = 0
+                  if current_object.piece_type == piece_type_king then
+                     is_king = 1
+                  end
+                  for each object with label "board_space" do
+                     if current_object.is_valid_move == 1 then
+                        temp_int_01  = current_object.space_flags
+                        temp_int_01 &= space_flag_is_threatened_by_enemy
+                        if is_king == 0 or temp_int_01 == 0 then
+                           piece_can_move = 1
+                        end
+                     end
+                  end
+                  has_movable_pieces += piece_can_move
+                  if piece_can_move == 0 then
+                     current_object.space_flags |= space_flag_has_no_valid_moves
+                  end
+               end
+            end
+         end
+         if has_movable_pieces == 0 then
+            temp_int_00  = turn_flags
+            temp_int_00 &= turn_flag_in_check
+            if temp_int_00 == 0 then
+               --
+               -- End the match in a draw.
+               --
+               ui_endgame.set_text("Draw! (White Team has no moves left.)")
+               if active_faction == faction_black then
+                  ui_endgame.set_text("Draw! (Black Team has no moves left.)")
+               end
+               do_endgame_ui_visibility()
+               game.end_round()
+            end
+         end
       end
       --
       alias pawn_count = temp_int_00
@@ -1537,14 +1674,16 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       prior_space = active_player.target_space
       active_player.target_space = no_object
       --
+      active_player.ui_would_self_check = 0
       for each object with label "board_space" do
          current_object.set_shape_visibility(no_one)
          if current_object.owner == active_faction and current_object.shape_contains(active_player.biped) then
-            temp_int_00  = current_object.space_flags
-            temp_int_00 &= space_flag_moving_would_self_check
-            active_player.ui_would_self_check = 1
-            if temp_int_00 == 0 then
-               active_player.ui_would_self_check = 0
+            alias cannot_move = temp_int_00
+            cannot_move  = current_object.space_flags
+            cannot_move &= space_flag_mask_cannot_move
+            active_player.ui_would_self_check |= current_object.space_flags
+            active_player.ui_would_self_check &= space_flag_moving_would_self_check
+            if cannot_move == 0 then
                current_object.set_shape_visibility(everyone)
                active_player.target_space = current_object
                if prior_space != current_object then
@@ -1687,15 +1826,6 @@ on object death: do
    end
 end
 
-function do_endgame_ui_visibility()
-   for each player do
-      ui_your_turn.set_visibility(current_player, false)
-      ui_in_check.set_visibility(current_player, false)
-      ui_bad_move.set_visibility(current_player, false)
-      -- ui_turn_clock and ui_endgame are the same widget
-      ui_endgame.set_visibility(current_player, true)
-   end
-end
 
 if winning_faction != faction_none then
    alias cell = temp_obj_00
