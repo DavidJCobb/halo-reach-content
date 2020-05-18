@@ -19,8 +19,6 @@
 --       can disable so that players CAN move into check and promptly get owned 
 --       for it.
 --
--- TODO: pawn promotion
---
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
 --       rook, one knight, one bishop, and one queen, and you get waypoints on 
@@ -46,6 +44,8 @@
 --
 --  - Target square selection
 --
+--  - Pawn promotion
+--
 --  - Check and checkmate
 --
 --  - Victory conditions: checkmate; killing king
@@ -62,7 +62,6 @@ alias opt_turn_clock = script_option[0]
 alias species_black  = script_option[1]
 alias species_white  = script_option[2]
 alias opt_draw_rule  = script_option[3]
-alias opt_debug_arrange = script_option[4]
 
 alias faction_none  = 0
 alias faction_black = 2 -- north
@@ -396,47 +395,6 @@ if board_created == 0 then -- generate board
          end
       end
       --
-if opt_debug_arrange == 1 then
-   --
-   -- Uppercase: black; lowercase: white
-   --
-   -- RNBQKBNR
-   -- PPPPBPPP -- Moving the bishop in this row would self-check
-   -- ░▓░▓░▓░▓
-   -- ▓░▓░r░▓░
-   -- ░▓░▓░▓░▓
-   -- ▓░▓░▓░▓░
-   -- pppppppp
-   -- rnbqkbnr
-   --
-   if current_object.coord_x == 4 then
-      if current_object.coord_y == 1 then
-         current_object.piece_type = piece_type_bishop
-      end
-      if current_object.coord_y == 3 then
-         current_object.piece_type = piece_type_rook
-         current_object.owner = faction_white
-      end
-   end
-end
-if opt_debug_arrange == 2 then
-   --
-   -- Uppercase: black; lowercase: white
-   --
-   -- RNBQKBNR
-   -- PPPPBPPP -- Moving the pawn in front of the queen would self-check
-   -- ░▓░▓░▓░▓
-   -- ▓░▓░▓░▓░
-   -- b▓░▓░▓░▓
-   -- ▓░▓░▓░▓░
-   -- pppppppp
-   -- rnbqkbnr
-   --
-   if current_object.coord_x == 0 and current_object.coord_y == 4 then
-      current_object.piece_type = piece_type_bishop
-      current_object.owner = faction_white
-   end
-end
       if current_object.piece_type != piece_type_none then
          if current_object.coord_y <= 1 then
             current_object.owner = faction_black
@@ -445,34 +403,6 @@ end
             current_object.owner = faction_white
          end
       end
-if opt_debug_arrange == 3 then
-   --
-   -- Uppercase: black; lowercase: white
-   --
-   -- ░▓░▓░▓░K -- black is in stalemate
-   -- ▓░▓░▓k▓░
-   -- ░▓░▓░▓q▓
-   -- ▓░▓░▓░▓░
-   -- ░▓░▓░▓░▓
-   -- ▓░▓░▓░▓░
-   -- ░▓░▓░▓░▓
-   -- ▓░▓░▓░▓░
-   --
-   current_object.piece_type = piece_type_none
-   current_object.owner = faction_none
-   if current_object.coord_x == 7 and current_object.coord_y == 0 then
-      current_object.piece_type = piece_type_king
-      current_object.owner = faction_black
-   end
-   if current_object.coord_x == 6 and current_object.coord_y == 2 then
-      current_object.piece_type = piece_type_queen
-      current_object.owner = faction_white
-   end
-   if current_object.coord_x == 5 and current_object.coord_y == 1 then
-      current_object.piece_type = piece_type_king
-      current_object.owner = faction_white
-   end
-end
    end
 end
 
@@ -1579,6 +1509,26 @@ function end_turn()
       for each object with label "board_space" do
          if current_object.piece_type == piece_type_pawn then
             pawn_count += 1
+            --
+            -- Let's handle pawn promotion too, while we're at it:
+            --
+            if winning_faction == faction_none then
+               if current_object.coord_y == 0 or current_object.coord_y == 7 then -- pawns can't go backwards so we can do this shortcut
+                  temp_obj_00 = current_object
+                  temp_obj_00.piece_type = piece_type_queen
+                  for each object with label "board_space_extra" do
+                     if current_object.marker == temp_obj_00 then
+                        current_object.biped.delete()
+                     end
+                  end
+                  if temp_obj_00.owner == faction_white then
+                     game.show_message_to(all_players, none, "White Team promoted a Pawn to Queen!")
+                  end
+                  if temp_obj_00.owner == faction_black then
+                     game.show_message_to(all_players, none, "Black Team promoted a Pawn to Queen!")
+                  end
+               end
+            end
          end
       end
       if pawn_count == 0 then
