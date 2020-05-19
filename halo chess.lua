@@ -1587,9 +1587,12 @@ function commit_move()
          target_space.en_passant_vulnerable = 1
       end
    end
+   alias slayer_owner        = temp_int_00
+   alias slain_enemy_is_king = temp_int_01
+   slayer_owner        = selected_piece.owner
+   slain_enemy_is_king = 0
    if target_space.piece_type == piece_type_king then -- king was killed
-      temp_int_00 = selected_piece.owner
-      begin_victory() -- victory condition: killed king
+      slain_enemy_is_king = 1
    end
    --
    target_space.piece_type = selected_piece.piece_type
@@ -1598,6 +1601,10 @@ function commit_move()
    selected_piece.owner      = faction_none
    selected_piece.en_passant_vulnerable = 0
    target_biped.delete()
+   if slain_enemy_is_king == 1 then
+      temp_int_00 = slayer_owner -- argument: faction to win
+      begin_victory() -- victory condition: killed king
+   end
    --
    end_turn()
 end
@@ -1610,11 +1617,14 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       -- set up at the end of a turn... so tell the game it's Black Team's turn and 
       -- then immediately end the turn.
       --
+      -- (Also, we want to alternate who gets to go first every round, but bear in 
+      -- mind that game.current_round starts from 1, not 0.)
+      --
       active_faction = faction_black
       active_team    = team_black
       temp_int_00  = game.current_round
       temp_int_00 %= 2
-      if temp_int_00 == 0 then -- actually, every round we should alternate who gets to move first
+      if temp_int_00 == 0 then -- every round we should alternate who gets to move first
          active_faction = faction_white
          active_team    = team_white
       end
