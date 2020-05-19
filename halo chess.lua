@@ -51,6 +51,8 @@
 --    control
 --
 
+alias MAX_INT = 32767
+
 alias species_human = 0
 alias species_elite = 1
 alias opt_turn_clock = script_option[0]
@@ -106,8 +108,8 @@ alias space_right   = object.object[1]
 alias space_above   = object.object[2]
 alias space_below   = object.object[3]
 declare object.piece_type    = piece_type_none
-declare object.is_valid_move = 0
-declare object.threatened_by = 0
+declare object.is_valid_move with network priority low = 0
+declare object.threatened_by with network priority low = 0
 declare object.owner         = faction_none
 declare object.space_flags   = 0
 --
@@ -149,6 +151,7 @@ alias temp_obj_04     = global.object[6]
 alias temp_obj_05     = global.object[7]
 alias active_player   = global.player[0] -- player currently making a move
 alias temp_plr_00     = global.player[1]
+alias temp_plr_01     = global.player[2]
 alias temp_tem_00     = global.team[3]
 alias turn_clock      = global.timer[0]
 declare turn_clock = opt_turn_clock
@@ -165,18 +168,26 @@ declare temp_obj_03 with network priority low
 declare temp_obj_04 with network priority low
 declare temp_obj_05 with network priority low
 declare temp_plr_00 with network priority low
+declare temp_plr_01 with network priority low
 declare temp_tem_00 with network priority low
 
 alias announced_game_start = player.number[0]
 alias ui_would_self_check  = player.number[1]
+declare player.ui_would_self_check = piece_type_none
+alias turn_order           = player.number[2]
+declare player.turn_order = -1
 alias target_space         = player.object[0] -- piece the player is about to select (pending their timer)
 alias selection_timer = player.timer[0]
 declare player.selection_timer = 2
 alias announce_start_timer = player.timer[1]
 declare player.announce_start_timer = 5
 
-alias faction = team.number[0]
-alias enemy   = team.team[0]
+alias faction    = team.number[0]
+declare team.faction with network priority low = faction_none
+alias turn_order = team.number[1]
+declare team.turn_order = -1
+alias enemy      = team.team[0]
+declare team.enemy with network priority low = no_team
 
 alias ui_your_turn  = script_widget[0]
 alias ui_in_check   = script_widget[1]
@@ -1614,9 +1625,73 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       active_player = no_player
    end
    if active_player == no_player then
-      for each player do
-         if current_player.team == active_team then
-            active_player = current_player
+      --
+      -- Ensure that all players have a turn order, and select an active player.
+      --
+      if active_team != no_team and active_team.has_any_players() then
+         --
+         -- Let's start by identifying the highest turn-order value, the lowest 
+         -- turn-order value, and the player with the lowest value.
+         --
+         alias t_o_min    = temp_int_00
+         alias t_o_max    = temp_int_01
+         alias min_player = temp_plr_01
+         t_o_min = MAX_INT
+         t_o_max = -1
+         temp_plr_01 = no_player
+         for each player do
+            if current_player.turn_order > -1 and current_player.team == active_team then
+               if current_player.turn_order < t_o_min then
+                  t_o_min    = current_player.turn_order
+                  min_player = current_player
+               end
+               if current_player.turn_order > t_o_max then
+                  t_o_max = current_player.turn_order
+               end
+            end
+         end
+         --
+         -- Next, let's try to advance the team's turn-order value to the next 
+         -- player, while also giving turn-order values to any players who are 
+         -- missing one.
+         --
+         alias t_o_next    = temp_int_02
+         alias next_player = temp_plr_00
+         t_o_next    = MAX_INT
+         next_player = no_player
+         for each player do
+            if current_player.turn_order < 0 then
+               --
+               -- This player doesn't have a turn-order value. Let's give them 
+               -- one.
+               --
+               t_o_max += 1
+               current_player.turn_order = t_o_max
+               if min_player == no_player then
+                  --
+                  -- If no players had turn-order values in the earlier loop, 
+                  -- then there won't be a min_player. We need to have one.
+                  --
+                  min_player = current_player
+               end
+            end
+            if  current_player.turn_order > active_team.turn_order 
+            and current_player.turn_order < t_o_next
+            then
+               t_o_next    = current_player.turn_order
+               next_player = current_player
+            end
+         end
+         if next_player == no_player then
+            --
+            -- There aren't any players after the new turn order, so we need to loop 
+            -- back around to the start.
+            --
+            next_player = min_player
+         end
+         if next_player != no_player then
+            active_player = next_player
+            active_team.turn_order = active_player.turn_order -- advance the team's current turn-order value
          end
       end
    end
