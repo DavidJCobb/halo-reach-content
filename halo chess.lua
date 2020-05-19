@@ -9,6 +9,20 @@
 --
 
 --
+-- TODO: If a team has multiple players and that team is the active team, then 
+--       all of its players should see a widget saying whose turn it is. If a 
+--       team has only one player and it is the active team, then the widget 
+--       should just say "Your Turn!"
+--
+--        - IMPLEMENTED; NEEDS TESTING.
+--
+-- TODO: implement the trait sets from the original Halo Chess, or remove them.
+--
+--        - Since MCC only shows up to four sets, let's ditch the traits for 
+--          each piece type for now and have a single trait set for a piece 
+--          that is under player control. If MCC ever fixes the custom game 
+--          option UI to show all trait sets, we can revisit this.
+--
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
 --
@@ -150,6 +164,7 @@ alias board_center    = global.object[5]
 alias temp_obj_04     = global.object[6]
 alias temp_obj_05     = global.object[7]
 alias active_player   = global.player[0] -- player currently making a move
+declare active_player with network priority high -- we use it in the UI
 alias temp_plr_00     = global.player[1]
 alias temp_plr_01     = global.player[2]
 alias temp_tem_00     = global.team[3]
@@ -272,6 +287,7 @@ for each player do -- announce game start
    current_player.set_round_card_title("Control chess pieces to move.\nAchieve checkmate to win!")
    if current_player.announced_game_start == 0 and current_player.announce_start_timer.is_zero() then 
       send_incident(action_sack_game_start, current_player, no_player)
+      game.show_message_to(current_player, none, "Halo Chess+ v1.0.0 by Cobb!")
       current_player.announced_game_start = 1
    end
 end
@@ -636,7 +652,18 @@ do -- UI
             ui_in_check.set_visibility(current_player, true)
          end
       end
+      --
       ui_your_turn.set_visibility(active_player, true)
+      for each player do
+         if current_player != active_player then
+            ui_your_turn.set_visibility(current_player, false)
+            if current_player.team == active_player.team then
+               ui_your_turn.set_visibility(current_player, true)
+               ui_your_turn.set_text("It's %s's turn!", active_player)
+            end
+         end
+      end
+      --
       if active_player.ui_would_self_check != 0 then
          ui_bad_move.set_visibility(active_player, true)
          if active_player.ui_would_self_check == piece_type_pawn then

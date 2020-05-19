@@ -14,16 +14,15 @@
 --
 -- TODO:
 --
---  - Consider prefixing the "private" labels with an underscore. Reach's Forge 
---    UI doesn't currently sort labels alphabetically; as long as MCC PC doesn't 
---    change this, an underscore is a good way to denote "privacy" in a way that 
---    programmers, at least, would recognize on sight.
---
 --  - Test the quit behavior.
 --
 --  - Test the team behavior.
 --
---  - Test the FFA behavior when multiple players are present.
+--     - 2v0 Test (Red Team)
+--
+--     - 2v0 Test (Blue Team)
+--
+--     - 3v* Test
 --
 
 alias board_size         = 9
@@ -58,7 +57,7 @@ alias temp_plr_02  = global.player[5] -- local
 declare temp_plr_02 with network priority local
 
 alias active_player   = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
-alias active_team     = team[0]
+alias active_team     = global.team[0]
 alias active_teammate = global.number[5]
 alias turn_order      = player.number[0]
 --
@@ -421,6 +420,12 @@ do -- manage active player
    end
    if active_player == no_player then
       if game.teams_enabled == 1 then
+         if active_team == no_team or not active_team.has_any_players() then
+            active_team = team[0]
+            if active_team == no_team or not active_team.has_any_players() then
+               active_team = team[1]
+            end
+         end
          alias turn_order = temp_int_00
          alias target     = temp_plr_00 -- the player with the lowest player.turn_order that is greater than active_teammate
          alias lowest     = temp_plr_01 -- the player with the lowest player.turn_order on the team
