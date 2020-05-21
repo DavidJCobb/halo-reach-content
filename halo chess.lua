@@ -16,13 +16,6 @@
 --
 --        - IMPLEMENTED; NEEDS TESTING.
 --
--- TODO: implement the trait sets from the original Halo Chess, or remove them.
---
---        - Since MCC only shows up to four sets, let's ditch the traits for 
---          each piece type for now and have a single trait set for a piece 
---          that is under player control. If MCC ever fixes the custom game 
---          option UI to show all trait sets, we can revisit this.
---
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
 --
@@ -30,9 +23,6 @@
 --       waypoints on each individual enemy piece; rather, the tray contains one 
 --       rook, one knight, one bishop, and one queen, and you get waypoints on 
 --       the pieces in the enemy tray.
---
--- TODO: if multiple players are on a team, they should take turns making moves 
---       for that team; turn order for players should be consistent
 --
 -- TODO: spawning the player into a Monitor after a move: i think official halo 
 --       chess uses an offset of (-15, 0, 15); try that and see if it's consistent 
@@ -211,6 +201,10 @@ alias ui_turn_clock = script_widget[3]
 alias ui_endgame    = script_widget[3] -- multi-purpose widget
 
 alias all_flags = 2 -- forge label
+
+alias monitor_traits  = script_traits[1]
+alias piece_traits    = script_traits[2]
+alias override_traits = script_traits[0]
 
 --
 -- SCRIPT FLOW:
@@ -632,6 +626,16 @@ for each player do -- force players into Monitor bipeds
       current_player.plasma_grenades = 0
    end
 end
+for each player do -- player traits
+   temp_obj_00 = current_player.biped
+   if temp_obj_00.is_of_type(monitor) then 
+      current_player.apply_traits(monitor_traits)
+   end
+   if temp_obj_00.is_script_created == 1 then
+      current_player.apply_traits(piece_traits)
+   end
+   current_player.apply_traits(override_traits)
+end
 do -- UI
    if winning_faction == faction_none then
       ui_your_turn.set_text("Your Turn!")
@@ -643,7 +647,10 @@ do -- UI
       temp_int_00  = turn_flags
       temp_int_00 &= turn_flag_in_check
       for each player do
-         ui_turn_clock.set_visibility(current_player, true)
+         ui_turn_clock.set_visibility(current_player, false)
+         if opt_turn_clock > 0 then
+            ui_turn_clock.set_visibility(current_player, true)
+         end
          --
          ui_your_turn.set_visibility(current_player, false)
          ui_in_check.set_visibility(current_player, false)
@@ -1647,13 +1654,13 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       -- (Also, we want to alternate who gets to go first every round, but bear in 
       -- mind that game.current_round starts from 1, not 0.)
       --
-      active_faction = faction_black
-      active_team    = team_black
+      active_faction = faction_white
+      active_team    = team_white
       temp_int_00  = game.current_round
       temp_int_00 %= 2
       if temp_int_00 == 0 then -- every round we should alternate who gets to move first
-         active_faction = faction_white
-         active_team    = team_white
+         active_faction = faction_black
+         active_team    = team_black
       end
       end_turn()
    end
@@ -1731,6 +1738,9 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
             active_team.turn_order = active_player.turn_order -- advance the team's current turn-order value
          end
       end
+   end
+   if active_player == no_player and opt_turn_clock <= 0 then -- team is empty and no turn clock; skip its turn
+      end_turn()
    end
    --
    active_player.ui_would_self_check = 0
