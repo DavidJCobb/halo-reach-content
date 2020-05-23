@@ -9,12 +9,13 @@
 --
 
 --
--- TODO: If a team has multiple players and that team is the active team, then 
---       all of its players should see a widget saying whose turn it is. If a 
---       team has only one player and it is the active team, then the widget 
---       should just say "Your Turn!"
+-- BUG: Host migration basically breaks the game; the board becomes littered 
+--      with dropped biped weapons, and possessing a biped causes a loud 
+--      vibration and a near-black screen (with a very, very faint afterimage 
+--      of the board). User is stuck on that black screen until the turn clock 
+--      runs out.
 --
---        - IMPLEMENTED; NEEDS TESTING.
+--       - Yep, vanilla Halo Chess nukes bipeds on host migration.
 --
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
@@ -27,11 +28,6 @@
 -- TODO: spawning the player into a Monitor after a move: i think official halo 
 --       chess uses an offset of (-15, 0, 15); try that and see if it's consistent 
 --       with gameplay videos. (currently we do (0, 0, 6).)
---
--- TODO: if a team has no players, skip its turn, optionally with a short delay 
---       and a UI message (clearly indicate the code; we only want this for 
---       testing, and we may try to replace it with letting a single player 
---       control both sides of the board)
 --
 -- TODO: trigger to delete dropped flags.
 --

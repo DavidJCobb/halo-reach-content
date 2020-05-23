@@ -18,9 +18,12 @@
 --
 --  - Test the team behavior.
 --
---     - 2v0 Test (Red Team)
+--     - 2v0 Test
 --
---     - 2v0 Test (Blue Team)
+--        - BUG: does not alternate players with each move
+--
+--        - BUG: "UP NEXT" widget is not consistent and often shows the player 
+--          currently working the board
 --
 --     - 3v* Test
 --
