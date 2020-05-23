@@ -63,6 +63,7 @@ alias active_player   = global.player[0] -- the player currently trying to solve
 alias active_team     = global.team[0]
 alias active_teammate = global.number[5]
 alias turn_order      = player.number[0]
+alias turn_is_taken   = global.number[7]
 --
 alias ui_next_active_player_a = global.player[3]
 alias ui_next_active_player_b = global.player[4]
@@ -549,11 +550,9 @@ on local: do -- manage UI for next active players
       turn_order = MAX_INT
       ui_next_active_player_b = no_player
       for each player do
-         if current_player.team == active_team then
+         if current_player.team == active_team and current_player != active_player then
             if lowest == no_player or current_player.turn_order < lowest.turn_order then
-               if current_player != active_player then
-                  lowest = current_player
-               end
+               lowest = current_player
             end
             if  current_player.team == active_team
             and current_player.turn_order > active_teammate
@@ -573,7 +572,7 @@ on local: do -- manage UI for next active players
          target = no_player
          turn_order = MAX_INT
          for each player do
-            if current_player.team == active_team then
+            if current_player.team == active_team and current_player != active_player then
                if  current_player.team == active_team
                and current_player.turn_order > ui_next_active_player_a.turn_order
                and current_player.turn_order < turn_order
@@ -582,6 +581,9 @@ on local: do -- manage UI for next active players
                   turn_order = current_player.turn_order
                end
             end
+         end
+         if target == no_player and ui_next_active_player_a != lowest then
+            target = lowest
          end
       end
       --
@@ -738,6 +740,7 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
          -- If we already spawned the initial coil, then this must be the destruction of a 
          -- Fusion Coil. Let's assume that the active player is responsible.
          --
+         turn_is_taken = 1
          --game.show_message_to(active_player, none, "Selected space %nx%n", cell.coord_x, cell.coord_y)
          --
          -- Check what action to take based on which weapon the player had equipped.
@@ -954,6 +957,14 @@ do -- call recursive reveal function; check for and handle round victory
             game.end_round()
          end
       end
+   end
+end
+
+if turn_is_taken != 0 then -- advance player turns for team games
+   turn_is_taken = 0
+   if game_ending == game_ending_no and game.teams_enabled == 1 then
+      active_player = no_player
+      active_teammate += 1
    end
 end
 

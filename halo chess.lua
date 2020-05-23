@@ -17,6 +17,22 @@
 --
 --       - Yep, vanilla Halo Chess nukes bipeds on host migration.
 --
+--       - Not resolved by looping over "board_space_extra"; try brute-forcing 
+--         it: loop over every object and delete every Spartan and Elite.
+--
+--       - It seems that on host migration, every scripted biped is deleted, 
+--         with one of each pair being dead. I suspect that the possession 
+--         problem may be the result of possessing a dead body.
+--
+-- TODO: Delete dropped weapons. Harder than it sounds since we can't get the 
+--       weapons held by a non-player biped, and we can't check if a weapon is 
+--       being held by a non-player biped. Only real way to do it is to have a 
+--       shape volume that covers the board, rising one unit off of the floor; 
+--       a weapon in this shape volume must be dropped (DOUBLE-CHECK THAT IT 
+--       ISN'T BEING HELD BY A PLAYER, AT LEAST) and should be deleted.
+--
+--        - Let's include dropped flags in this.
+--
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
 --
@@ -28,8 +44,6 @@
 -- TODO: spawning the player into a Monitor after a move: i think official halo 
 --       chess uses an offset of (-15, 0, 15); try that and see if it's consistent 
 --       with gameplay videos. (currently we do (0, 0, 6).)
---
--- TODO: trigger to delete dropped flags.
 --
 -- DONE:
 --
@@ -270,6 +284,19 @@ on init: do
    team_white.enemy   = team_black
    team_black.faction = faction_black
    team_white.faction = faction_white
+end
+
+on host migration: do
+   for each object with label "board_space_extra" do
+      temp_obj_00 = current_object.biped
+      temp_obj_00.delete()
+   end
+   --
+   -- Deleting a controlled biped requires additional changes to game state, 
+   -- as well as accommodations for wasting the player's turn time:
+   --
+   turn_clock.reset()
+   selected_piece = no_object
 end
 
 for each player do -- announce game start
