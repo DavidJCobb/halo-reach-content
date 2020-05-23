@@ -18,12 +18,13 @@
 --
 --  - Test the team behavior.
 --
+--     - 1v1 Test
+--
+--        - BUG: does not alternate teams each round
+--
 --     - 2v0 Test
 --
 --        - BUG: does not alternate players with each move
---
---        - BUG: "UP NEXT" widget is not consistent and often shows the player 
---          currently working the board
 --
 --     - 3v* Test
 --
@@ -63,7 +64,6 @@ alias active_player   = global.player[0] -- the player currently trying to solve
 alias active_team     = global.team[0]
 alias active_teammate = global.number[5]
 alias turn_order      = player.number[0]
-alias turn_is_taken   = global.number[7]
 --
 alias ui_next_active_player_a = global.player[3]
 alias ui_next_active_player_b = global.player[4]
@@ -109,9 +109,8 @@ alias cell_reveal_state_yes       = 1
 alias cell_reveal_state_recursing = 2
 
 alias game_state_flags                  = global.number[1]
-alias game_state_flag_board_constructed =  1 -- 0x0001
-alias game_state_flag_move_made         =  2 -- 0x0002
-alias game_state_flag_move_made_CLR     = -3 -- 0xFFFD -- clear flag
+alias game_state_flag_board_constructed = 1 -- 0x0001
+alias game_state_flag_move_made         = 2 -- 0x0002
 alias game_ending                 = global.number[4]
 alias game_ending_no              = 0
 alias game_ending_queued          = 1
@@ -412,19 +411,22 @@ if game.teams_enabled == 1 then -- set team order
    end
 end
 do -- manage active player
-   if game_ending == 0 then
+   if game_ending == game_ending_no then
       temp_int_00  = game_state_flags
       temp_int_00 &= game_state_flag_move_made
       if temp_int_00 != 0 then
-         game_state_flags &= game_state_flag_move_made_CLR -- clear flag
+         game_state_flags ~= game_state_flag_move_made -- clear flag
          if game.teams_enabled == 1 then
-            active_player = 0
+            active_player = no_player
          end
       end
    end
    if active_player == no_player then
       if game.teams_enabled == 1 then
          if active_team == no_team or not active_team.has_any_players() then
+            --
+            -- TODO: we need to alternate teams each round
+            --
             active_team = team[0]
             if active_team == no_team or not active_team.has_any_players() then
                active_team = team[1]
@@ -542,11 +544,10 @@ on local: do -- manage UI for next active players
    end
    if game.teams_enabled == 1 then
       alias turn_order = temp_int_03
-      --
-      alias target = ui_next_active_player_a
-      alias lowest = temp_plr_02
-      target = no_player
-      lowest = no_player
+      alias target     = ui_next_active_player_a
+      alias lowest     = temp_plr_02
+      target     = no_player
+      lowest     = no_player
       turn_order = MAX_INT
       ui_next_active_player_b = no_player
       for each player do
@@ -740,7 +741,6 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
          -- If we already spawned the initial coil, then this must be the destruction of a 
          -- Fusion Coil. Let's assume that the active player is responsible.
          --
-         turn_is_taken = 1
          --game.show_message_to(active_player, none, "Selected space %nx%n", cell.coord_x, cell.coord_y)
          --
          -- Check what action to take based on which weapon the player had equipped.
@@ -957,14 +957,6 @@ do -- call recursive reveal function; check for and handle round victory
             game.end_round()
          end
       end
-   end
-end
-
-if turn_is_taken != 0 then -- advance player turns for team games
-   turn_is_taken = 0
-   if game_ending == game_ending_no and game.teams_enabled == 1 then
-      active_player = no_player
-      active_teammate += 1
    end
 end
 

@@ -22,7 +22,8 @@
 --
 --       - It seems that on host migration, every scripted biped is deleted, 
 --         with one of each pair being dead. I suspect that the possession 
---         problem may be the result of possessing a dead body.
+--         problem may be the result of possessing a dead body -- something 
+--         I've been meaning to test...
 --
 -- TODO: Delete dropped weapons. Harder than it sounds since we can't get the 
 --       weapons held by a non-player biped, and we can't check if a weapon is 
