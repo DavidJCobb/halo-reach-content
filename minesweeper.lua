@@ -16,11 +16,14 @@
 --
 --  - Test the quit behavior.
 --
+--     - Test results will not be meaningful until player turn order works
+--
 --  - Test the team behavior.
 --
 --     - 1v1 Test
 --
---        - BUG: does not alternate teams each round
+--        - BUG: does not alternate teams each round; alter code which initially 
+--          sets (active_team).
 --
 --     - 2v0 Test
 --

@@ -20,19 +20,12 @@
 --       - Not resolved by looping over "board_space_extra"; try brute-forcing 
 --         it: loop over every object and delete every Spartan and Elite.
 --
+--          - IMPLEMENTED. NEEDS TESTING.
+--
 --       - It seems that on host migration, every scripted biped is deleted, 
 --         with one of each pair being dead. I suspect that the possession 
 --         problem may be the result of possessing a dead body -- something 
 --         I've been meaning to test...
---
--- TODO: Delete dropped weapons. Harder than it sounds since we can't get the 
---       weapons held by a non-player biped, and we can't check if a weapon is 
---       being held by a non-player biped. Only real way to do it is to have a 
---       shape volume that covers the board, rising one unit off of the floor; 
---       a weapon in this shape volume must be dropped (DOUBLE-CHECK THAT IT 
---       ISN'T BEING HELD BY A PLAYER, AT LEAST) and should be deleted.
---
---        - Let's include dropped flags in this.
 --
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
@@ -135,6 +128,7 @@ alias extra  = object.object[1] -- link biped to extra
 --
 -- Board center data:
 alias piece_deselect_boundary = object.object[0]
+alias weapon_delete_zone      = object.object[1]
 --
 -- State for the kings' flags:
 alias flag_was_processed = object.is_script_created
@@ -288,15 +282,15 @@ on init: do
 end
 
 on host migration: do
-   for each object with label "board_space_extra" do
-      temp_obj_00 = current_object.biped
-      temp_obj_00.delete()
+   for each object do
+      if current_object.is_of_type(spartan) or current_object.is_of_type(elite) then
+         current_object.delete()
+      end
    end
+   turn_clock.reset() -- just to be nice
    --
-   -- Deleting a controlled biped requires additional changes to game state, 
-   -- as well as accommodations for wasting the player's turn time:
+   -- If we deleted a controlled biped, then we need to adjust game state accordingly:
    --
-   turn_clock.reset()
    selected_piece = no_object
 end
 
@@ -384,6 +378,13 @@ if board_created == 0 then -- generate board
    working.copy_rotation_from(board_center, true)
    working.set_shape(box, 140, 140, 40, 20)
    board_center.piece_deselect_boundary = working
+   --
+   working = board_center.place_at_me(hill_marker, none, never_garbage_collect, 0, 0, 0, none)
+   working.attach_to(board_center, 0, 0, 0, relative)
+   working.detach()
+   working.copy_rotation_from(board_center, true)
+   working.set_shape(box, 90, 90, 2, 0)
+   board_center.weapon_delete_zone = working
    --
    current = board_center.place_at_me(block_1x1_flat, "board_space", never_garbage_collect, 0, 0, 0, none)
    current.attach_to(board_center, first_cell_x_offset, first_cell_y_offset, first_cell_z_offset, relative)
@@ -619,6 +620,34 @@ for each object with label "board_space_extra" do -- manage piece waypoint visib
             if temp_int_00 != 0 then
                extra.biped.set_waypoint_priority(low)
             end
+         end
+      end
+   end
+end
+for each object do -- try to delete dropped weapons
+   --
+   -- We only care about weapons dropped by slain pieces, so don't bother 
+   -- testing for types that we never spawn through script.
+   --
+   if current_object.is_of_type(assault_rifle)
+   or current_object.is_of_type(concussion_rifle)
+   or current_object.is_of_type(dmr)
+   or current_object.is_of_type(energy_sword)
+   or current_object.is_of_type(flag)
+   or current_object.is_of_type(focus_rifle)
+   or current_object.is_of_type(grenade_launcher)
+   or current_object.is_of_type(plasma_launcher)
+   or current_object.is_of_type(plasma_repeater)
+   or current_object.is_of_type(rocket_launcher)
+   or current_object.is_of_type(shotgun)
+   or current_object.is_of_type(sniper_rifle)
+   or current_object.is_of_type(frag_grenade)   -- bipeds have two frags by default
+   or current_object.is_of_type(plasma_grenade) -- just in case
+   then
+      temp_plr_00 = current_object.get_carrier()
+      if temp_plr_00 == no_player then
+         if board_center.weapon_delete_zone.shape_contains(current_object) then
+            current_object.delete()
          end
       end
    end
@@ -1763,7 +1792,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          end
       end
    end
-   if active_player == no_player and opt_turn_clock <= 0 then -- team is empty and no turn clock; skip its turn
+   if active_player == no_player and opt_turn_clock <= 0 then -- team is empty and no turn clock; skip its turn to prevent a softlock if no one joins in progress
       end_turn()
    end
    --
@@ -1841,7 +1870,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
             extra = current_object
          end
       end
-      if active_player.biped.is_of_type(monitor) and extra.biped != no_object then
+      if active_player.biped.is_of_type(monitor) and extra.biped != no_object then -- initial biped swap upon taking control of the piece
          temp_obj_00 = active_player.biped
          active_player.set_biped(extra.biped)
          temp_obj_00.delete()
@@ -1850,6 +1879,9 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
       -- The player can capture an empty space by standing in it. For an occupied space, 
       -- they must kill the piece on that space. The code here handles empty spaces.
       --
+      alias last_target_space = temp_obj_00
+      last_target_space = active_player.target_space
+      active_player.target_space = no_object
       for each object with label "board_space" do
          current_object.set_shape_visibility(no_one)
          if current_object.is_valid_move == 1 then
@@ -1861,17 +1893,19 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
             if temp_int_00 == 0 then
                current_object.set_shape_visibility(everyone)
                if  current_object.piece_type == piece_type_none
-               and active_player.target_space != current_object
                and current_object.shape_contains(active_player.biped)
                then
                   active_player.target_space = current_object
-                  active_player.selection_timer.reset()
                end
             end
          end
       end
       if active_player.target_space == no_object then
          active_player.selection_timer.set_rate(0%)
+         active_player.selection_timer.reset()
+      end
+      if active_player.target_space != last_target_space then
+         active_player.selection_timer.reset()
       end
       if active_player.target_space != no_object then
          active_player.selection_timer.set_rate(-100%)
@@ -1889,7 +1923,9 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          -- If the current player runs their piece-biped far outside of the board, deselect 
          -- the piece so they can change their choice.
          --
-         selected_piece = no_object
+         active_player.selection_timer.reset()
+         active_player.target_space = no_object
+         selected_piece             = no_object
          quick_force_active_player_to_monitor()
       end
    end
