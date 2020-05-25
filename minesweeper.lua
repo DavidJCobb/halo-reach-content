@@ -44,6 +44,7 @@ alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[2]
 alias temp_int_02  = global.number[3]
 alias temp_int_03  = global.number[6] -- local
+alias temp_int_04  = global.number[7]
 declare temp_int_03 with network priority local
 alias temp_plr_00  = global.player[1]
 alias temp_plr_01  = global.player[2]
@@ -83,7 +84,7 @@ alias cell_left  = object.object[1]
 alias cell_right = object.object[2]
 alias cell_below = object.object[3] -- no more room for object.object vars!
 alias adjacent_mines_count = object.number[1]
-alias has_mine             = object.number[3]
+alias has_mine             = object.number[3] -- scoring code assumes this is always 0 or 1
 alias coord_x              = object.number[4]
 alias coord_y              = object.number[5]
 alias has_flag             = object.number[6]
@@ -156,7 +157,7 @@ on host migration: do
    end
 end
 
-for each player do -- set loadout palettes
+for each player do -- set loadout palettes and handle some UI
    ui_current_player.set_text("It's %s's turn!", active_player)
    ui_how_to_play.set_text("Shoot a space with the Magnum to uncover it.\nShoot a space with the DMR to (un)flag it.")
    if current_player.announce_start_timer.is_zero() and current_player.announced_game_start != 1 then
@@ -381,7 +382,7 @@ do -- construct board
       _construct_and_link_board_row() -- row 7
       _construct_and_link_board_row() -- row 8
       _construct_and_link_board_row() -- row 9
-      for each object with label "minesweep_cell" do
+      for each object with label "minesweep_cell" do -- create extra-markers
          alias block = temp_obj_00
          --
          block = current_object.place_at_me(block_1x1_flat, "minesweep_cell_extra", never_garbage_collect, 0, 0, 0, none)
@@ -536,7 +537,7 @@ do -- manage active player
       end
    end
    --
-   for each player do
+   for each player do -- force players into Monitors as appropriate
       if current_player != active_player then
          current_player.apply_traits(spectator_traits)
          if not current_player.biped.is_of_type(monitor) then
@@ -545,12 +546,14 @@ do -- manage active player
             --
             -- TEAM: Spectators not allied with the active player should be forced into 
             -- unarmed Monitor bipeds. Spectators allied with the active player should 
-            -- be stripped of their weapons (TODO).
+            -- be stripped of their weapons.
             --
             if game.teams_enabled == 0 or current_player.team != active_player.team then
                temp_obj_00 = current_player.biped
                temp_obj_01 = temp_obj_00.place_at_me(monitor, none, none, 0, 0, 0, none)
                current_player.set_biped(temp_obj_01)
+               temp_obj_01.remove_weapon(secondary, true)
+               temp_obj_01.remove_weapon(primary,   true)
                temp_obj_00.delete()
             end
             if game.teams_enabled == 1 and current_player.team == active_player.team then
@@ -791,6 +794,9 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
                   if cell.adjacent_mines_count == 0 then
                      cell.reveal_state = cell_reveal_state_recursing -- queue for recursive reveal
                   end
+                  if cell.adjacent_mines_count > 0 then
+                     active_player.score += opt_points_space
+                  end
                end
             end
             if cell.has_flag == 1 then
@@ -932,45 +938,69 @@ function do_recursive_reveal()
    end
    if pending > 0 then
       safety += 1
-      if safety < 30 then
+      if safety < 100 then -- laboratory tests suggest that call depths of 5000+ produce no human-noticeable performance impact
          do_recursive_reveal()
       end
    end
 end
 do -- call recursive reveal function; check for and handle round victory
+   alias revealed_prior = temp_int_04
+   revealed_prior = 0
+   for each object with label "minesweep_cell" do
+      if current_object.reveal_state == cell_reveal_state_yes then
+         revealed_prior += 1
+      end
+   end
+   --
+   temp_int_01 = 0 -- argument
    do_recursive_reveal()
-   if temp_int_00 == 0 then -- previous function ran successfully?
+   --
+   if temp_int_00 == 0 then -- previous function revealed all spaces that were pending reveal?
       --
       -- We want to check for victory (defined as revealing all non-mined spaces), 
       -- but first, we need to check whether we've already registered a failure. 
       -- Why? We reveal the whole board when the player fails.
       --
       if game_ending == game_ending_no then
+         alias revealed_after = temp_int_01
+         revealed_after = 0
          --
-         -- Check for victory.
+         -- Award points for revealing spaces, and check for victory.
          --
          alias remaining = temp_int_00
-         alias consumed  = temp_int_01
          alias mines     = temp_int_02
          remaining = 0
-         consumed  = 0
          mines     = 2
          for each object with label "minesweep_cell" do
             mines += current_object.has_mine
             if current_object.has_mine == 0 then
-               consumed += 1
+               if current_object.reveal_state == cell_reveal_state_yes then
+                  revealed_after += 1
+               end
                if current_object.reveal_state != cell_reveal_state_yes then
                   remaining += 1
                end
             end
          end
+         revealed_after -= revealed_prior
+         if revealed_after > 0 then
+            --
+            -- Award points for recursively revealing spaces. (Points for non-recursively 
+            -- revealing a single space are awarded in the board interaction code above.)
+            --
+            temp_int_04  = game_state_flags
+            temp_int_04 &= game_state_flag_move_made
+            if temp_int_04 != 0 then
+               active_player.stat_uncovered += revealed_after
+               revealed_after      *= opt_points_space
+               active_player.score += revealed_after
+            end
+         end
+         --
          if remaining == 0 then
-            active_player.stat_uncovered += consumed
-            mines    *= opt_points_flag
-            consumed *= opt_points_space
+            mines *= opt_points_flag
             active_player.score += opt_points_win
             active_player.score += mines
-            active_player.score += consumed
             game.show_message_to(active_player, none, "You solved the board!")
             for each player do
                if current_player != active_player then
@@ -988,12 +1018,6 @@ do -- handle round endings other than successes
    and game.round_time_limit > 0
    and game.round_timer.is_zero()
    then
-      for each object with label "minesweep_cell" do
-         if current_object.has_mine == 0 and current_object.reveal_state == cell_reveal_state_yes then
-            active_player.stat_uncovered += 1
-            active_player.score += opt_points_space
-         end
-      end
       game.end_round()
    end
    if game_ending != game_ending_no then -- handle player failure
@@ -1006,9 +1030,6 @@ do -- handle round endings other than successes
       for each object with label "minesweep_cell" do
          if current_object.has_mine == 1 and current_object.has_flag == 1 then
             correct_flags += 1
-         end
-         if current_object.has_mine == 0 and current_object.reveal_state == cell_reveal_state_yes then
-            active_player.stat_uncovered += 1
          end
       end
       correct_flags *= opt_points_flag
