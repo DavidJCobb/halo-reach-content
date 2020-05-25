@@ -18,19 +18,6 @@
 --
 --     - Test results will not be meaningful until player turn order works
 --
---  - Test the team behavior.
---
---     - 1v1 Test
---
---        - BUG: does not alternate teams each round; alter code which initially 
---          sets (active_team).
---
---     - 2v0 Test
---
---        - BUG: does not alternate players with each move
---
---     - 3v* Test
---
 
 alias board_size         = 9
 alias desired_mine_count = 10
@@ -62,11 +49,20 @@ alias temp_plr_00  = global.player[1]
 alias temp_plr_01  = global.player[2]
 alias temp_plr_02  = global.player[5] -- local
 declare temp_plr_02 with network priority local
+alias temp_tem_00  = global.team[1]
+alias temp_tem_01  = global.team[2]
+--
+declare board_center with network priority low
+declare first_cell   with network priority local
 
 alias active_player   = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
 alias active_team     = global.team[0]
 alias active_teammate = global.number[5]
-alias turn_order      = player.number[0]
+alias turn_order      = player.number[2]
+declare active_player     with network priority high
+declare active_team       with network priority low
+declare active_teammate   with network priority high
+declare player.turn_order with network priority low -- pn1
 --
 alias ui_next_active_player_a = global.player[3]
 alias ui_next_active_player_b = global.player[4]
@@ -76,8 +72,10 @@ declare ui_next_active_player_b with network priority local
 alias announced_game_start = player.number[0]
 alias announce_start_timer = player.timer[0]
 declare player.announce_start_timer = 5
+declare player.announced_game_start with network priority low
 
 alias set_player_weapons = player.number[1]
+declare player.set_player_weapons with network priority low
 
 -- Fields for cells:
 alias cell_above = object.object[0]
@@ -90,6 +88,16 @@ alias coord_x              = object.number[4]
 alias coord_y              = object.number[5]
 alias has_flag             = object.number[6]
 alias reveal_state         = object.number[7]
+declare object.adjacent_mines_count with network priority low -- on1
+declare object.cell_above   with network priority low  -- oo0
+declare object.cell_below   with network priority low  -- oo3
+declare object.cell_left    with network priority low  -- oo1
+declare object.cell_right   with network priority low  -- oo2
+declare object.has_mine     with network priority low  -- on3
+declare object.coord_x      with network priority low  -- on4
+declare object.coord_y      with network priority low  -- on5
+declare object.has_flag     with network priority high -- on6
+declare object.reveal_state with network priority high -- on7
 --
 -- Fields for Block 1x1 Flats:
 alias cell_marker  = object.object[0]
@@ -99,10 +107,12 @@ alias cell_flag    = object.object[3]
 alias number_drawn = object.number[0] -- bool
 alias coil_invulnerability_timer = object.timer[0]
 declare object.coil_invulnerability_timer = 1
+declare object.number_drawn with network priority low -- on0
 --
 -- General:
 alias next_object       = object.object[1]
 alias is_script_created = object.number[2]
+declare object.is_script_created with network priority low
 --
 alias cell_flags = object.number[0]
 alias cell_flag_initial_coil_spawned = 1 -- 0x0001
@@ -122,11 +132,10 @@ alias game_ending_done            = 3
 alias game_ending_quit            = 4
 alias game_failure_cinematic_timer   = global.timer[0] -- kill active player and end round after this time passes
 alias game_failure_timer             = global.timer[1] -- kill active player and end round after this time passes
+declare game_state_flags with network priority high
+declare game_ending      with network priority high
 declare game_failure_cinematic_timer = 4
 declare game_failure_timer           = 7
-
-declare active_player with network priority high
-declare object.adjacent_mines_count with network priority low
 
 alias ui_current_player = script_widget[0]
 alias ui_how_to_play    = script_widget[1]
@@ -141,6 +150,12 @@ on init: do
       current_player.announce_start_timer.set_rate(-100%)
    end
 end
+on host migration: do
+   for each player do
+      current_player.set_player_weapons = 0
+   end
+end
+
 for each player do -- set loadout palettes
    ui_current_player.set_text("It's %s's turn!", active_player)
    ui_how_to_play.set_text("Shoot a space with the Magnum to uncover it.\nShoot a space with the DMR to (un)flag it.")
@@ -383,7 +398,18 @@ do -- construct board
       randomize_mines()
    end
 end
-if game.teams_enabled == 1 then -- set team order
+if game.teams_enabled == 1 then -- manage active team and set team order
+   if active_team == no_team or not active_team.has_any_players() then -- set active team
+      --
+      -- We shouldn't need any code to alternate teams; the "designator switch 
+      -- type" functionality should remap team indices under the hood with each 
+      -- round that passes.
+      --
+      active_team = team[0]
+      if active_team == no_team or not active_team.has_any_players() then
+         active_team = team[1]
+      end
+   end
    --
    -- In team games, we give every player on the active team a "turn order" value, 
    -- and use this to ensure that players take turns in a consistent order. Turn 
@@ -405,7 +431,7 @@ if game.teams_enabled == 1 then -- set team order
       end
    end
    if missing > 0 then
-      for each player do
+      for each player randomly do
          if current_player.team == active_team and current_player.turn_order == 0 then
             turn_order += 1
             current_player.turn_order = turn_order
@@ -426,15 +452,6 @@ do -- manage active player
    end
    if active_player == no_player then
       if game.teams_enabled == 1 then
-         if active_team == no_team or not active_team.has_any_players() then
-            --
-            -- TODO: we need to alternate teams each round
-            --
-            active_team = team[0]
-            if active_team == no_team or not active_team.has_any_players() then
-               active_team = team[1]
-            end
-         end
          alias turn_order = temp_int_00
          alias target     = temp_plr_00 -- the player with the lowest player.turn_order that is greater than active_teammate
          alias lowest     = temp_plr_01 -- the player with the lowest player.turn_order on the team
@@ -489,6 +506,9 @@ do -- manage active player
          end
       end
       active_player.stat_plays += 1
+      for each player do
+         current_player.set_player_weapons = 0
+      end
    end
    active_player.apply_traits(active_player_traits)
    ui_how_to_play.set_visibility(active_player, false)
@@ -498,21 +518,21 @@ do -- manage active player
          active_player.set_player_weapons = 1
          active_player.biped.remove_weapon(secondary, true)
          active_player.biped.remove_weapon(primary,   true)
-         active_player.biped.add_weapon(dmr,    force)
          active_player.biped.add_weapon(magnum, force)
+         active_player.biped.add_weapon(dmr,    force)
       end
    end
    if active_player.killer_type_is(guardians | suicide | kill | betrayal | quit) then
       active_player.set_player_weapons = 0
-      --
-      -- For FFA, detect if the active player quits:
-      --
-      if  active_player.killer_type_is(quit)
-      and game.teams_enabled == 0
-      and game_ending == game_ending_no
-      then
-         game_ending = game_ending_quit
-         game.show_message_to(all_players, none, "The active player quit. Ending round.")
+      if active_player.killer_type_is(quit) then
+         active_player = no_player
+         --
+         -- For FFA, end the round if the active player quits:
+         --
+         if game.teams_enabled == 0 and game_ending == game_ending_no then
+            game_ending = game_ending_quit
+            game.show_message_to(all_players, none, "The active player quit. Ending round.")
+         end
       end
    end
    --
@@ -545,7 +565,7 @@ on local: do -- manage UI for next active players
    for each player do
       ui_next_players.set_visibility(current_player, false)
    end
-   if game.teams_enabled == 1 then
+   if game.teams_enabled == 1 and game_ending == game_ending_no then
       alias turn_order = temp_int_03
       alias target     = ui_next_active_player_a
       alias lowest     = temp_plr_02

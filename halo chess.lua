@@ -9,24 +9,6 @@
 --
 
 --
--- BUG: Host migration basically breaks the game; the board becomes littered 
---      with dropped biped weapons, and possessing a biped causes a loud 
---      vibration and a near-black screen (with a very, very faint afterimage 
---      of the board). User is stuck on that black screen until the turn clock 
---      runs out.
---
---       - Yep, vanilla Halo Chess nukes bipeds on host migration.
---
---       - Not resolved by looping over "board_space_extra"; try brute-forcing 
---         it: loop over every object and delete every Spartan and Elite.
---
---          - IMPLEMENTED. NEEDS TESTING.
---
---       - It seems that on host migration, every scripted biped is deleted, 
---         with one of each pair being dead. I suspect that the possession 
---         problem may be the result of possessing a dead body -- something 
---         I've been meaning to test...
---
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
 --
@@ -115,11 +97,18 @@ alias space_left    = object.object[0]
 alias space_right   = object.object[1]
 alias space_above   = object.object[2]
 alias space_below   = object.object[3]
-declare object.piece_type    = piece_type_none
+declare object.coord_x       with network priority low
+declare object.coord_y       with network priority low
+declare object.piece_type    with network priority high = piece_type_none
+declare object.owner         with network priority high = faction_none
 declare object.is_valid_move with network priority low = 0
 declare object.threatened_by with network priority low = 0
-declare object.owner         = faction_none
-declare object.space_flags   = 0
+declare object.en_passant_vulnerable with network priority low
+declare object.space_flags   with network priority low = 0
+declare object.space_left    with network priority low -- oo0
+declare object.space_right   with network priority low -- oo1
+declare object.space_above   with network priority low -- oo2
+declare object.space_below   with network priority low -- oo3
 --
 -- Cell-extra data:
 alias marker = object.object[0]
@@ -138,9 +127,11 @@ alias temp_int_00     = global.number[0]
 alias temp_int_01     = global.number[1]
 alias temp_int_02     = global.number[2]
 alias board_created   = global.number[3]
+declare board_created with network priority low
 alias active_faction  = global.number[4] -- faction currently making a move
-declare active_faction = faction_none
+declare active_faction with network priority high = faction_none
 alias turn_flags      = global.number[5]
+declare turn_flags with network priority low
 alias temp_int_03     = global.number[6]
 alias winning_faction = global.number[7]
 declare winning_faction with network priority low = faction_none
@@ -156,6 +147,7 @@ alias temp_obj_02     = global.object[2]
 alias temp_obj_03     = global.object[3]
 alias selected_piece  = global.object[4] -- piece that the player is (about to be) controlling
 alias board_center    = global.object[5]
+declare board_center with network priority low
 alias temp_obj_04     = global.object[6]
 alias temp_obj_05     = global.object[7]
 alias active_player   = global.player[0] -- player currently making a move
@@ -183,21 +175,23 @@ declare temp_tem_00 with network priority low
 
 alias announced_game_start = player.number[0]
 alias ui_would_self_check  = player.number[1]
-declare player.ui_would_self_check = piece_type_none
 alias turn_order           = player.number[2]
-declare player.turn_order = -1
 alias target_space         = player.object[0] -- piece the player is about to select (pending their timer)
 alias selection_timer = player.timer[0]
-declare player.selection_timer = 2
 alias announce_start_timer = player.timer[1]
+declare player.announced_game_start with network priority low
+declare player.ui_would_self_check  with network priority low = piece_type_none
+declare player.turn_order           with network priority low = -1
+declare player.target_space         with network priority low
+declare player.selection_timer      = 2
 declare player.announce_start_timer = 5
 
 alias faction    = team.number[0]
-declare team.faction with network priority low = faction_none
 alias turn_order = team.number[1]
-declare team.turn_order = -1
 alias enemy      = team.team[0]
-declare team.enemy with network priority low = no_team
+declare team.faction    with network priority low = faction_none
+declare team.turn_order with network priority low = -1
+declare team.enemy      with network priority low = no_team
 
 alias ui_your_turn  = script_widget[0]
 alias ui_in_check   = script_widget[1]
@@ -282,6 +276,16 @@ on init: do
 end
 
 on host migration: do
+   --
+   -- Host migration can duplicate all script-spawned bipeds, with the originals 
+   -- dying instantly without any discernible cause and despite having been flagged 
+   -- as invincible. Script variables which point at these bipeds become unreliable: 
+   -- possessing these bipeds leads to spectacularly broken behavior, and trying to 
+   -- delete them by looping over the "board_space_extra" objects fails.
+   --
+   -- The only host migrations I've tested are quits; it's possible that migrations 
+   -- with other causes would lead to less unstable behavior.
+   --
    for each object do
       if current_object.is_of_type(spartan) or current_object.is_of_type(elite) then
          current_object.delete()
@@ -625,6 +629,13 @@ for each object with label "board_space_extra" do -- manage piece waypoint visib
    end
 end
 for each object do -- try to delete dropped weapons
+   --
+   -- We don't have an easy way to identify whether a weapon is being held 
+   -- by a non-player-controlled biped. As such, we'll take a shortcut: we 
+   -- create a "weapon deletion zone" at the board, extending 0.1 Forge 
+   -- units (1 foot) above the surface of the board. Any weapons in this 
+   -- zone must be either dropped or being held by a player-controlled 
+   -- biped.
    --
    -- We only care about weapons dropped by slain pieces, so don't bother 
    -- testing for types that we never spawn through script.
