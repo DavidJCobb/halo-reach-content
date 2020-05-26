@@ -37,6 +37,13 @@ alias first_checkpoint   = global.object[0] -- checkpoint with the lowest spawn 
 alias queued_award_point_to    = global.player[0]
 alias last_player_to_take_lead = global.player[1]
 alias distance_traveled_update_timer = global.timer[0]
+declare checkpoint_count             with network priority local
+declare last_checkpoint_id           with network priority low
+declare first_checkpoint             with network priority low
+declare showed_spawn_failure_message with network priority low = 0
+declare queued_award_point_to        with network priority low
+declare last_player_to_take_lead     with network priority low
+declare distance_traveled_update_timer = 1
 --
 alias checkpoint_id    = object.number[0]
 alias mine_is_armed    = object.number[1] -- have we started the detonation timer?
@@ -46,6 +53,15 @@ alias prev_node        = object.object[1]
 alias owner            = object.player[0] -- for vehicles
 alias abandoned_timer  = object.timer[0] -- used to delete vehicles that stop moving for too long
 alias detonation_timer = object.timer[1] -- for landmines
+declare object.checkpoint_id      with network priority low
+declare object.mine_is_armed      with network priority low
+declare object.is_created_vehicle with network priority low
+declare object.next_node          with network priority low
+declare object.prev_node          with network priority low
+declare object.owner              with network priority low
+declare object.abandoned_timer  = 16
+declare object.detonation_timer = opt_mine_arm_time
+
 alias next_checkpoint_number      = player.number[0]
 alias completed_lap_count         = player.number[1]
 alias lap_completed_this_tick     = player.number[2]
@@ -59,22 +75,6 @@ alias on_foot_timer               = player.timer[0]
 alias current_lap_time            = player.timer[1]
 alias announce_game_start_timer   = player.timer[2]
 alias vehicle                     = player.object[0]
-
-declare checkpoint_count with network priority local
-declare last_checkpoint_id with network priority low
-declare global.number[2] with network priority local -- temporary
-declare global.number[3] with network priority local -- temporary
-declare global.number[4] with network priority local -- temporary
-declare global.number[5] with network priority local -- temporary
-declare first_checkpoint with network priority low
-declare showed_spawn_failure_message with network priority low = 0
-declare global.object[1] with network priority local -- temporary
-declare global.object[2] with network priority local -- temporary
-declare global.object[3] with network priority local -- temporary
-declare global.object[4] with network priority local -- temporary
-declare queued_award_point_to    with network priority low
-declare last_player_to_take_lead with network priority low
-declare distance_traveled_update_timer = 1
 declare player.next_checkpoint_number      with network priority low = -1
 declare player.completed_lap_count         with network priority low
 declare player.lap_completed_this_tick     with network priority low
@@ -87,11 +87,15 @@ declare player.vehicle       with network priority low
 declare player.self          with network priority low
 declare player.on_foot_timer = 10
 declare player.announce_game_start_timer = 1
-declare object.checkpoint_id with network priority low
-declare object.mine_is_armed with network priority low
-declare object.owner with network priority low
-declare object.abandoned_timer = 16
-declare object.detonation_timer = opt_mine_arm_time
+
+declare global.number[2] with network priority local -- temporary
+declare global.number[3] with network priority local -- temporary
+declare global.number[4] with network priority local -- temporary
+declare global.number[5] with network priority local -- temporary
+declare global.object[1] with network priority local -- temporary
+declare global.object[2] with network priority local -- temporary
+declare global.object[3] with network priority local -- temporary
+declare global.object[4] with network priority local -- temporary
 
 alias widget_speed_vehi = script_widget[0]
 alias widget_speed_foot = script_widget[3]
