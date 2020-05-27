@@ -12,6 +12,13 @@
 --
 
 --
+-- BUG: This is minor, but if you're the only player in a team game, then when 
+--      you uncover a space, your Magnum's firing animation will be interrupted 
+--      (because the weapon is taken from you upon the turn ending, and given 
+--      to you immediately afterward upon the next turn beginning).
+--
+-- TODO: Strongly consider implementing a turn clock like in Halo Chess.
+--
 -- TODO:
 --
 --  - Test the quit behavior.
@@ -154,6 +161,21 @@ end
 on host migration: do
    for each player do
       current_player.set_player_weapons = 0
+   end
+end
+if active_player != no_player then -- emergency trigger to detect active player quits
+   --
+   -- player.killer_type_is(quit) doesn't seem to work reliably so 
+   -- we're just doing this lol
+   --
+   temp_int_00 = 0
+   for each player do
+      if current_player == active_player then
+         temp_int_00 = 1
+      end
+   end
+   if temp_int_00 == 0 then
+      active_player = no_player
    end
 end
 

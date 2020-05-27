@@ -9,6 +9,8 @@
 --
 
 --
+-- TODO: randomize turn order for players (see Minesweeper implementation)
+--
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
 --
@@ -83,7 +85,7 @@ alias is_script_created = object.number[5]
 alias coord_x       = object.number[0]
 alias coord_y       = object.number[1]
 alias piece_type    = object.number[2]
-alias is_valid_move = object.number[3]
+alias is_valid_move = object.number[3] -- must be 0 or 1
 alias owner         = object.number[4]
 alias threatened_by = object.number[5] -- for check(mate) processing
 alias en_passant_vulnerable = object.number[6] -- pawns only; must be set on the turn the pawn double-moves, and cleared on its owner's next turn
@@ -274,7 +276,6 @@ on init: do
    team_black.faction = faction_black
    team_white.faction = faction_white
 end
-
 on host migration: do
    --
    -- Host migration can duplicate all script-spawned bipeds, with the originals 
@@ -296,6 +297,23 @@ on host migration: do
    -- If we deleted a controlled biped, then we need to adjust game state accordingly:
    --
    selected_piece = no_object
+end
+
+if active_player != no_player then -- emergency trigger to detect active player quits
+   --
+   -- player.killer_type_is(quit) doesn't seem to work reliably so 
+   -- we're just doing this lol
+   --
+   temp_int_00 = 0
+   for each player do
+      if current_player == active_player then
+         temp_int_00 = 1
+      end
+   end
+   if temp_int_00 == 0 then
+      active_player  = no_player
+      selected_piece = no_object
+   end
 end
 
 for each player do -- announce game start
@@ -1525,6 +1543,7 @@ function end_turn()
       previous_faction = active_faction
       previous_player  = active_player
       active_faction   = faction_white
+      active_team      = no_team -- (team_var = foo) does nothing if (foo) isn't in the match, so we need to clear the variable ourselves first
       active_team      = team_white
       if previous_faction == faction_white then
          active_faction = faction_black
