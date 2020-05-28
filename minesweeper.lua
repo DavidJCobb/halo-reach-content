@@ -190,7 +190,7 @@ for each player do -- set loadout palettes and handle some UI
    end
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
-   else
+   alt
       current_player.set_loadout_palette(spartan_tier_1)
    end
    ui_current_player.set_visibility(current_player, false)
@@ -686,7 +686,7 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
          --
          working.attach_to(block, 0, 0, 1, relative)
          working.set_invincibility(1)
-      elseif cell.adjacent_mines_count > 0 then
+      altif cell.adjacent_mines_count > 0 then
          alias working_adjacent = temp_int_01
          function _rotate()
             for each object with label "minesweep_dice" do
@@ -871,7 +871,7 @@ function do_recursive_reveal()
             if working.has_mine == 0 and working.reveal_state == cell_reveal_state_no then
                if working.adjacent_mines_count > 0 then
                   working.reveal_state = cell_reveal_state_yes
-               else
+               alt
                   working.reveal_state = cell_reveal_state_recursing
                   pending += 1
                   working = working.cell_left
@@ -888,7 +888,7 @@ function do_recursive_reveal()
             if working.has_mine == 0 and working.reveal_state == cell_reveal_state_no then
                if working.adjacent_mines_count > 0 then
                   working.reveal_state = cell_reveal_state_yes
-               else
+               alt
                   working.reveal_state = cell_reveal_state_recursing
                   pending += 1
                   working = working.cell_right
@@ -905,7 +905,7 @@ function do_recursive_reveal()
             if working.has_mine == 0 and working.reveal_state == cell_reveal_state_no then
                if working.adjacent_mines_count > 0 then
                   working.reveal_state = cell_reveal_state_yes
-               else
+               alt
                   working.reveal_state = cell_reveal_state_recursing
                   pending += 1
                   working = working.cell_above
@@ -922,7 +922,7 @@ function do_recursive_reveal()
             if working.has_mine == 0 and working.reveal_state == cell_reveal_state_no then
                if working.adjacent_mines_count > 0 then
                   working.reveal_state = cell_reveal_state_yes
-               else
+               alt
                   working.reveal_state = cell_reveal_state_recursing
                   pending += 1
                   working = working.cell_below
@@ -938,7 +938,7 @@ function do_recursive_reveal()
             if working.has_mine == 0 and working.reveal_state == cell_reveal_state_no then
                if working.adjacent_mines_count > 0 then
                   working.reveal_state = cell_reveal_state_yes
-               else
+               alt
                   working.reveal_state = cell_reveal_state_recursing
                   pending += 1
                end

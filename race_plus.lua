@@ -241,7 +241,7 @@ end
 for each player do -- set loadout palettes
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
-   else
+   alt
       current_player.set_loadout_palette(spartan_tier_1)
    end
 end
@@ -630,7 +630,7 @@ for each player do -- UI for lap completion; best lap time tracking
       current_player.completed_lap_count += 1
       if current_player.completed_lap_count == 1 then 
          current_player.best_lap_time = current_player.current_lap_time
-      elseif current_player.current_lap_time < current_player.best_lap_time then 
+      altif current_player.current_lap_time < current_player.best_lap_time then 
          current_player.best_lap_time = current_player.current_lap_time
          game.show_message_to(current_player, none, "New best lap time!")
       end

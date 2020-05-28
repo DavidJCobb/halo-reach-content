@@ -518,7 +518,7 @@ for each object with label "board_space_extra" do -- generate missing bipeds
             if cell.piece_type == piece_type_pawn then
                if species == species_human then
                   biped = cell.place_at_me(spartan, none, none, 0, 0, 1, male)
-               else
+               alt
                   biped = cell.place_at_me(elite, none, none, 0, 0, 1, minor)
                end
                setup_biped()
@@ -526,14 +526,14 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.set_waypoint_text("Pawn")
                if biped.is_of_type(spartan) then
                   biped.add_weapon(assault_rifle, primary)
-               else
+               alt
                   biped.add_weapon(plasma_repeater, primary)
                end
             end
             if cell.piece_type == piece_type_knight then
                if species == species_human then
                   biped = cell.place_at_me(spartan, none, none, 0, 0, 1, emile)
-               else
+               alt
                   biped = cell.place_at_me(elite, none, none, 0, 0, 1, spec_ops)
                end
                setup_biped()
@@ -541,14 +541,14 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.set_waypoint_text("Knight")
                if biped.is_of_type(spartan) then
                   biped.add_weapon(shotgun, primary)
-               else
+               alt
                   biped.add_weapon(energy_sword, primary)
                end
             end
             if cell.piece_type == piece_type_bishop then
                if species == species_human then
                   biped = cell.place_at_me(spartan, none, none, 0, 0, 1, female)
-               else
+               alt
                   biped = cell.place_at_me(elite, none, none, 0, 0, 1, zealot)
                end
                setup_biped()
@@ -556,14 +556,14 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.set_waypoint_text("Bishop")
                if biped.is_of_type(spartan) then
                   biped.add_weapon(grenade_launcher, primary)
-               else
+               alt
                   biped.add_weapon(concussion_rifle, primary)
                end
             end
             if cell.piece_type == piece_type_rook then
                if species == species_human then
                   biped = cell.place_at_me(spartan, none, none, 0, 0, 1, jun)
-               else
+               alt
                   biped = cell.place_at_me(elite, none, none, 0, 0, 1, space)
                end
                setup_biped()
@@ -571,14 +571,14 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.set_waypoint_text("Rook")
                if biped.is_of_type(spartan) then
                   biped.add_weapon(sniper_rifle, primary)
-               else
+               alt
                   biped.add_weapon(beam_rifle, primary)
                end
             end
             if cell.piece_type == piece_type_queen then
                if species == species_human then
                   biped = cell.place_at_me(spartan, none, none, 0, 0, 1, kat)
-               else
+               alt
                   biped = cell.place_at_me(elite, none, none, 0, 0, 1, ultra)
                end
                setup_biped()
@@ -586,14 +586,14 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.set_waypoint_text("Queen")
                if biped.is_of_type(spartan) then
                   biped.add_weapon(rocket_launcher, primary)
-               else
+               alt
                   biped.add_weapon(plasma_launcher, primary)
                end
             end
             if cell.piece_type == piece_type_king then
                if species == species_human then
                   biped = cell.place_at_me(spartan, none, none, 0, 0, 1, carter)
-               else
+               alt
                   biped = cell.place_at_me(elite, none, none, 0, 0, 1, general)
                end
                setup_biped()
@@ -1145,7 +1145,7 @@ function is_king_in_check()
                         -- You can't physically block a knight.
                         --
                         king_in_checkmate = 1
-                     else
+                     alt
                         --
                         -- We've already identified every space that the king's allies can 
                         -- move to. Let's take the unoccupied spaces and temporarily change 
