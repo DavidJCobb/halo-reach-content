@@ -9,8 +9,6 @@
 --
 
 --
--- TODO: randomize turn order for players (see Minesweeper implementation)
---
 -- TODO: consider adding a script option which controls whether you're allowed 
 --       to put yourself in check.
 --
@@ -1786,7 +1784,7 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          alias next_player = temp_plr_00
          t_o_next    = MAX_INT
          next_player = no_player
-         for each player do
+         for each player randomly do
             if current_player.turn_order < 0 then
                --
                -- This player doesn't have a turn-order value. Let's give them 
