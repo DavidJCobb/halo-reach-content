@@ -41,8 +41,6 @@
 
 -- TODO:
 --
---  - Wraith Anti-Infantry Turret position is wrong
---
 --  - Test Falcon gunners (requires Theater since turrets are first-person 
 --    and you can't see your own arms)
 --
@@ -50,14 +48,15 @@
 --    late March 2020 the format has changed; need to see if Assembly has 
 --    been made compatible.
 --
---  - Test hijacking, somehow
---
---     - NEEDS TESTING
+--  - TEST HIJACKING. REQUIRES HAVING ANOTHER PLAYER ON HAND, SINCE WHEN A 
+--    RIDER-SEAT AND A HIJACKER-SEAT HAVE THE SAME POSITION, WE CAN ONLY 
+--    IDENTIFY A HIJACKER BY PLAYER (NPC BIPEDS ARE NOT PLAYERS).
 
 
 alias driver_traits    = script_traits[0]
 alias passenger_traits = script_traits[1]
 alias gunner_traits    = script_traits[2]
+alias hijacker_traits  = script_traits[3]
 
 enum seat_type
    none
@@ -79,6 +78,63 @@ alias last_player  = object.player[1] -- last player to occupy a seat node
 alias seat_type    = player.number[0] -- player's last-known seat type
 alias last_vehicle = player.object[0] -- player's last-known vehicle
 alias last_seat    = player.object[1] -- player's last-known seat node
+
+-- < TEST CODE FOR HIJACKING
+alias did_set_up_hijack = global.number[0]
+alias hijack_setup_time = global.timer[0]
+alias temp_plr_00 = global.player[0]
+declare hijack_setup_time = 4
+if did_set_up_hijack == 0 then
+   hijack_setup_time.set_rate(-100%)
+   if hijack_setup_time.is_zero() then
+      for each player do
+         temp_plr_00 = current_player
+      end
+      for each object do
+         function _force()
+            temp_obj_00 = current_object.place_at_me(elite, none, none, 0, 0, 0, ultra)
+            temp_plr_00.set_biped(temp_obj_00)
+            temp_plr_00.force_into_vehicle(current_object)
+            temp_obj_01 = temp_plr_00.get_vehicle()
+            if temp_obj_01 == no_object then
+               temp_obj_00.delete()
+            end
+         end
+         --
+         if current_object.is_of_type(banshee)
+         or current_object.is_of_type(ghost)
+         then
+            _force()
+         end
+         if current_object.is_of_type(mongoose)
+         or current_object.is_of_type(revenant)
+         or current_object.is_of_type(sabre)
+         or current_object.is_of_type(scorpion)
+         or current_object.is_of_type(wraith)
+         then
+            _force()
+            _force()
+         end
+         if current_object.is_of_type(falcon)
+         or current_object.is_of_type(warthog)
+         then
+            _force()
+            _force()
+            _force()
+         end
+      end
+      --
+      -- Ensure the player can spawn in a natural biped:
+      --
+      temp_obj_00 = temp_plr_00.biped.place_at_me(elite, none, none, 0, 0, 0, ultra)
+      temp_plr_00.set_biped(temp_obj_00)
+      temp_obj_00.delete()
+      --
+      did_set_up_hijack = 1
+      game.show_message_to(all_players, none, "NPC bipeds set up for hijack tests!")
+   end
+end
+-- > TEST CODE FOR HIJACKING
 
 function set_up_seat_nodes()
    --
@@ -137,11 +193,7 @@ function set_up_seat_nodes()
       _append()
       working.attach_to(vehicle.seat_node, -3, 0, 1, relative)
       working.seat_type = seat_type.driver
-      --
-      -- Boarding driver:
-      _append()
-      working.attach_to(vehicle.seat_node, -6, 0, 0, relative)
-      working.seat_type = seat_type.hijacker
+      working.hijack_is_same_pos = 1
    end
    if vehicle.is_of_type(mongoose) then
       -- Driver seat:
@@ -215,6 +267,11 @@ function set_up_seat_nodes()
       _append()
       working.attach_to(vehicle.seat_node, -5, 0, 7, relative)
       working.seat_type = seat_type.gunner
+      --
+      -- Boarding turret:
+      _append()
+      working.attach_to(vehicle.seat_node, -12, 0, 4, relative)
+      working.seat_type = seat_type.hijacker
       
       -- Commented these out because they conflict with the turret position; 
       -- would need a way to detect if a warthog has a turret before using 
@@ -244,7 +301,7 @@ function set_up_seat_nodes()
       --
       -- Turret:
       _append()
-      working.attach_to(vehicle.seat_node, -2, 0, 7, relative)
+      working.attach_to(vehicle.seat_node, -2, 0, 10, relative)
       working.seat_type = seat_type.gunner
       --
       -- Boarding left:
@@ -281,9 +338,8 @@ for each player do -- track player's current seat type
       -- seat nodes:
       --
       alias current_node  = temp_obj_01
-      alias occupied_node = temp_obj_02
-      --
       function _handle_shape_contains()
+         alias occupied_node = temp_obj_02
          if current_node.shape_contains(current_player.biped) then
             occupied_node = current_node
             current_player.seat_type = occupied_node.seat_type
@@ -365,5 +421,8 @@ for each player do -- apply traits
    end
    if current_player.seat_type == seat_type.passenger then
       current_player.apply_traits(passenger_traits)
+   end
+   if current_player.seat_type == seat_type.hijacker then
+      current_player.apply_traits(hijacker_traits)
    end
 end
