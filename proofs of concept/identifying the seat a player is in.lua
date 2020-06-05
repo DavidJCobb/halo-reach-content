@@ -26,6 +26,13 @@
 --
 --    Multiply the translation values by 10 to get the Megalo units.
 --
+--  - Every spot where you can hijack a vehicle is also a "seat," but 
+--    with additional data indicating which seat you end up in when you 
+--    finish hijacking (when it's not something like a wraith, where you 
+--    just melee or plant a grenade). In some cases, the hijack seat has 
+--    an identical or near-identical position to the rider seat, but this 
+--    is not always true.
+--
 --  - Turrets are implemented as separate vehicles which are attached to 
 --    their bases. The HLMT for the base vehicle has a Variants list with 
 --    an Objects list per variant. These, too, use a marker. Be sure to  
@@ -45,32 +52,13 @@
 --
 --  - Test hijacking, somehow
 --
---     - Requires hijack checks for cases where the hijack "seat" is too 
---       close (or overlapping) the occupant seat. We'd need to maintain a 
---       timer on each player which counts upward, measuring how long they 
---       have occupied a given seat; if a hijack "seat" is known to overlap 
---       an occupant seat, and two players are in the same vehicle at the 
---       same seat, then the one who has been there longer is being hijacked 
---       by the other.
---
---        - Needs an "hijack_is_same_pos" object.number
---
---        - May want to add "..._hijackable" constants to the seat_type enum. 
---          We want this to be able to work with Race+; as is, we can replace 
---          that script's player.is_in_vehicle with player.seat_type, but we 
---          are otherwise out of player.number variables we can use.
+--     - NEEDS TESTING
 
 
 alias driver_traits    = script_traits[0]
 alias passenger_traits = script_traits[1]
 alias gunner_traits    = script_traits[2]
 
-alias temp_obj_00 = global.object[0]
-alias temp_obj_01 = global.object[1]
-alias temp_obj_02 = global.object[2]
-alias temp_obj_03 = global.object[3]
-alias seat_type   = object.number[0]
-alias seat_node   = object.object[2]
 enum seat_type
    none
    driver
@@ -78,7 +66,19 @@ enum seat_type
    passenger
    hijacker
 end
-alias seat_type = player.number[0]
+
+alias temp_obj_00  = global.object[0]
+alias temp_obj_01  = global.object[1]
+alias temp_obj_02  = global.object[2]
+alias temp_obj_03  = global.object[3]
+alias temp_plr_00  = global.player[0]
+alias seat_type    = object.number[0] -- a seat node's type
+alias hijack_is_same_pos = object.number[1] -- this rider-seat has the same or similar position as its corresponding hijack-seat
+alias seat_node    = object.object[2] -- singly-linked list of "seat nodes"
+alias last_player  = object.player[1] -- last player to occupy a seat node
+alias seat_type    = player.number[0] -- player's last-known seat type
+alias last_vehicle = player.object[0] -- player's last-known vehicle
+alias last_seat    = player.object[1] -- player's last-known seat node
 
 function set_up_seat_nodes()
    --
@@ -114,12 +114,7 @@ function set_up_seat_nodes()
       _append()
       working.attach_to(vehicle.seat_node, -1, 0, 6, relative)
       working.seat_type = seat_type.driver
-      --
-      -- The "boarding driver" seat has the same coordinates as the driver's seat, and so 
-      -- cannot be meaningfully distinguished... unless the hijacker and the hijackee both 
-      -- show up as sharing the vehicle, in which case the hijacker is the one of the two 
-      -- who has been at that spot for the shortest amount of time. Hm...
-      --
+      working.hijack_is_same_pos = 1
    end
    if vehicle.is_of_type(falcon) then
       -- Driver seat:
@@ -153,34 +148,25 @@ function set_up_seat_nodes()
       _append()
       working.attach_to(vehicle.seat_node, -2, 0, 3, relative)
       working.seat_type = seat_type.driver
+      working.hijack_is_same_pos = 1
       --
-      -- Passenger seat:
+      -- Passenger seat (cannot be hijacked):
       _append()
       working.attach_to(vehicle.seat_node, -4, 0, 4, relative)
       working.seat_type = seat_type.passenger
-      --
-      -- The "boarding driver" seat has the same coordinates as the driver's seat, and so 
-      -- cannot be meaningfully distinguished... unless the hijacker and the hijackee both 
-      -- show up as sharing the vehicle, in which case the hijacker is the one of the two 
-      -- who has been at that spot for the shortest amount of time. Hm...
-      --
-      -- The passenger seat, apparently, cannot be hijacked at all.
-      --
    end
    if vehicle.is_of_type(revenant) then
       -- Driver seat:
       _append()
       working.attach_to(vehicle.seat_node, -4, 2, 3, relative)
       working.seat_type = seat_type.driver
+      working.hijack_is_same_pos = 1
       --
       -- Passenger seat:
       _append()
       working.attach_to(vehicle.seat_node, -4, -2, 3, relative)
       working.seat_type = seat_type.passenger
-      --
-      -- The "boarding driver" seat is too close to the driver seat to be meaningfully tested. 
-      -- Ditto for the passenger seat.
-      --
+      working.hijack_is_same_pos = 1
    end
    if vehicle.is_of_type(scorpion) then
       -- Driver seat:
@@ -294,18 +280,79 @@ for each player do -- track player's current seat type
       -- We can use a recursive function to traverse the linked list of 
       -- seat nodes:
       --
-      alias current_node = temp_obj_01
-      current_node = vehicle.seat_node
-      function _iterate()
+      alias current_node  = temp_obj_01
+      alias occupied_node = temp_obj_02
+      --
+      function _handle_shape_contains()
          if current_node.shape_contains(current_player.biped) then
-            current_player.seat_type = current_node.seat_type
-         end
-         current_node = current_node.seat_node
-         if current_node != no_object then
-            _iterate()
+            occupied_node = current_node
+            current_player.seat_type = occupied_node.seat_type
+            current_player.last_seat = occupied_node
+            if current_node.hijack_is_same_pos == 1 then
+               --
+               -- We can't use positioning distinguish being in this seat from hijacking 
+               -- this seat, because riding and hijacking use the same positions.
+               --
+               if  current_node.last_player != current_player
+               and current_node.last_player != no_player
+               and current_node.last_player.biped != no_object -- the other player could've quit the match and therefore not been removed from the seat
+               and current_node.shape_contains(current_node.last_player.biped)
+               then
+                  --
+                  -- This seat is already flagged as having a player, and that player has 
+                  -- a biped (meaning they haven't quit or been killed). We must be hijacking.
+                  --
+                  current_player.seat_type = seat_type.hijacker
+                  occupied_node = no_object -- clear this so we don't set state on the seat node
+               end
+            end
+            occupied_node.last_player = current_player
          end
       end
-      _iterate()
+      --
+      current_node = current_player.last_seat
+      if current_player.last_vehicle == vehicle and current_node != no_object then
+         --
+         -- First, a shortcut: players will spend more frames NOT changing vehicles than 
+         -- they will spend changing vehicles, so if a player's vehicle has not changed 
+         -- and we know what seat node they had last, test that node first.
+         --
+         _handle_shape_contains()
+      end
+      current_player.last_vehicle = vehicle
+      if current_player.seat_type == seat_type.none then
+         --
+         -- Looks like the player isn't in the last seat node we had them in. 
+         --
+         current_node.last_player = no_object
+         --
+         -- We can traverse the vehicle's seat node list using a recursive function:
+         --
+         current_node = vehicle.seat_node
+         function _iterate()
+            _handle_shape_contains()
+            current_node = current_node.seat_node
+            if current_node != no_object then
+               _iterate()
+            end
+         end
+         _iterate()
+      end
+   end
+end
+for each player do -- cleanup for players who have stopped being in a vehicle/seat
+   --
+   -- This cleanup loop will only run for players who are still in the match; players 
+   -- who have quit out won't be cleaned up, so the checks above need to deal with that.
+   --
+   if current_player.seat_type == seat_type.none then
+      alias last_seat = temp_obj_00
+      --
+      last_seat = current_player.last_seat
+      current_player.last_seat = no_object
+      if last_seat.last_player == current_player then
+         last_seat.last_player = no_object
+      end
    end
 end
 
