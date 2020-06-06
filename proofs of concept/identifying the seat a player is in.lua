@@ -13,6 +13,14 @@
 -- palette setup and round timer management), nor does it contain any 
 -- scoring or other gameplay elements.
 --
+-- NOTES:
+--
+-- We can only reliably detect hijacking of seats occupied by players. 
+-- Seats occupied by NPC bipeds will only flag as being hijacked depend-
+-- ing on the vehicle type.
+--
+-- FURTHER DEVELOPMENT:
+--
 -- As of this writing, seat positions can be looked up in Assembly like 
 -- so:
 --
@@ -40,9 +48,6 @@
 --
 
 -- TODO:
---
---  - Test Falcon gunners (requires Theater since turrets are first-person 
---    and you can't see your own arms)
 --
 --  - Need positions for Thorage vehicles; requires opening MCC maps. As of 
 --    late March 2020 the format has changed; need to see if Assembly has 
@@ -79,62 +84,18 @@ alias seat_type    = player.number[0] -- player's last-known seat type
 alias last_vehicle = player.object[0] -- player's last-known vehicle
 alias last_seat    = player.object[1] -- player's last-known seat node
 
--- < TEST CODE FOR HIJACKING
-alias did_set_up_hijack = global.number[0]
-alias hijack_setup_time = global.timer[0]
-alias temp_plr_00 = global.player[0]
-declare hijack_setup_time = 4
-if did_set_up_hijack == 0 then
-   hijack_setup_time.set_rate(-100%)
-   if hijack_setup_time.is_zero() then
-      for each player do
-         temp_plr_00 = current_player
-      end
-      for each object do
-         function _force()
-            temp_obj_00 = current_object.place_at_me(elite, none, none, 0, 0, 0, ultra)
-            temp_plr_00.set_biped(temp_obj_00)
-            temp_plr_00.force_into_vehicle(current_object)
-            temp_obj_01 = temp_plr_00.get_vehicle()
-            if temp_obj_01 == no_object then
-               temp_obj_00.delete()
-            end
-         end
-         --
-         if current_object.is_of_type(banshee)
-         or current_object.is_of_type(ghost)
-         then
-            _force()
-         end
-         if current_object.is_of_type(mongoose)
-         or current_object.is_of_type(revenant)
-         or current_object.is_of_type(sabre)
-         or current_object.is_of_type(scorpion)
-         or current_object.is_of_type(wraith)
-         then
-            _force()
-            _force()
-         end
-         if current_object.is_of_type(falcon)
-         or current_object.is_of_type(warthog)
-         then
-            _force()
-            _force()
-            _force()
-         end
-      end
-      --
-      -- Ensure the player can spawn in a natural biped:
-      --
-      temp_obj_00 = temp_plr_00.biped.place_at_me(elite, none, none, 0, 0, 0, ultra)
-      temp_plr_00.set_biped(temp_obj_00)
-      temp_obj_00.delete()
-      --
-      did_set_up_hijack = 1
-      game.show_message_to(all_players, none, "NPC bipeds set up for hijack tests!")
-   end
-end
--- > TEST CODE FOR HIJACKING
+declare temp_obj_00 with network priority local
+declare temp_obj_01 with network priority local
+declare temp_obj_02 with network priority local
+declare temp_obj_03 with network priority local
+declare temp_plr_00 with network priority local
+declare object.seat_type          with network priority low
+declare object.hijack_is_same_pos with network priority low
+declare object.seat_node          with network priority low
+declare object.last_player        with network priority low
+declare player.seat_type          with network priority low
+declare player.last_vehicle       with network priority low
+declare player.last_seat          with network priority low
 
 function set_up_seat_nodes()
    --
@@ -180,13 +141,17 @@ function set_up_seat_nodes()
       --
       -- Left gunner:
       _append()
-      working.attach_to(vehicle.seat_node, -6, 5, 2, relative) -- NEEDS CONFIRMATION
+      working.set_shape(sphere, 3) -- I don't know the exact position here so screw it
+      working.attach_to(vehicle.seat_node, -2, 2, 0, relative)
       working.seat_type = seat_type.gunner
+      working.hijack_is_same_pos = 1
       --
       -- Right gunner:
       _append()
-      working.attach_to(vehicle.seat_node, -6, -5, 2, relative) -- NEEDS CONFIRMATION
+      working.set_shape(sphere, 3) -- I don't know the exact position here so screw it
+      working.attach_to(vehicle.seat_node, -2, -2, 0, relative)
       working.seat_type = seat_type.gunner
+      working.hijack_is_same_pos = 1
    end
    if vehicle.is_of_type(ghost) then
       -- Driver seat:
