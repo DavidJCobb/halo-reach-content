@@ -226,17 +226,13 @@ for each object do -- try to sync Monitor eye-lights with Monitor bobbing animat
          current_object.eye_timer.set_rate(-1000%)
          --
          light = current_object.eye_light
-         if light.eye_dir > 0 then
-            light.eye_counter += 1
+         if light.eye_dir == 0 then
+            light.eye_dir = -1
          end
-         if light.eye_dir <= 0 then
-            light.eye_counter -= 1
-         end
+         light.eye_counter += light.eye_dir
+         light.eye_counter += light.eye_dir
          if light.eye_counter >= 10 or light.eye_counter <= -10 then
             light.eye_dir *= -1
-            if light.eye_dir == 0 then
-               light.eye_dir = 1
-            end
          end
          --
          alias node_n  = temp_obj_01
@@ -253,13 +249,26 @@ for each object do -- try to sync Monitor eye-lights with Monitor bobbing animat
          alt
             node_n.attach_to(current_object, 1, 0,  1, relative)
          end
-         node_p.eye_counter = -10
-         node_n.eye_counter =  10
+         --
+         function _halve_max_distance()
+            node_c = node_n.place_between_me_and(node_p, hill_marker, 0)
+            node_n.delete()
+            node_n = node_c
+            node_c = no_object
+         end
+         _halve_max_distance()
+         --
+         node_p.eye_counter = 0
+         node_n.eye_counter = 10
          if light.eye_counter == node_n.eye_counter then
             node_c = node_n
          end
          if light.eye_counter == node_p.eye_counter then
             node_c = node_p
+         end
+         counter = light.eye_counter
+         if counter < 0 then
+            counter *= -1
          end
          if node_c == no_object then
             function _iterate()
@@ -267,12 +276,12 @@ for each object do -- try to sync Monitor eye-lights with Monitor bobbing animat
                node_c.eye_counter  = node_p.eye_counter
                node_c.eye_counter += node_n.eye_counter
                node_c.eye_counter /= 2
-               if  light.eye_counter  != node_c.eye_counter
+               if  counter            != node_c.eye_counter
                and node_p.eye_counter != node_n.eye_counter -- make sure we're not stuck
                and node_c.eye_counter != node_n.eye_counter -- make sure we're not stuck
                and node_c.eye_counter != node_p.eye_counter -- make sure we're not stuck
                then
-                  if light.eye_counter > node_c.eye_counter then
+                  if counter > node_c.eye_counter then
                      node_p.delete()
                      node_p = node_c
                   alt
