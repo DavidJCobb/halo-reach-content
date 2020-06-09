@@ -1,10 +1,19 @@
 
+enum monitor_skins
+   standard
+   exuberant
+end
+
 alias opt_use_custom_spartan = script_option[0]
+alias opt_monitor_skin       = script_option[1]
 
 alias monitor_traits = script_traits[0]
 
 alias ui_aa_warp_a = script_widget[0]
 alias ui_aa_warp_b = script_widget[1]
+
+-- Unnamed Forge labels:
+alias all_initial_spawns = 1
 
 enum func_stage
    none
@@ -26,7 +35,8 @@ alias eye_dir      = object.number[1] -- on monitor.eye_light
 alias eye_light    = object.object[0]
 alias eye_timer    = object.timer[0]
 alias func_stage   = player.number[0] -- see (func_stage) enum
-alias anchor       = player.object[0]
+alias failsafe_on  = player.number[1]
+alias queued_teleport       = player.object[0]
 alias func_timer   = player.timer[0]
 alias ui_timer     = player.timer[1]
 
@@ -40,7 +50,7 @@ declare temp_obj_04 with network priority local
 declare temp_plr_00 with network priority local
 declare object.eye_light  with network priority low
 declare player.func_stage with network priority low = func_stage.none
-declare player.anchor     with network priority low
+declare player.queued_teleport     with network priority low
 declare player.func_timer = 10
 declare player.ui_timer   = 10
 
@@ -54,25 +64,60 @@ for each player do -- loadout palettes
 end
 
 for each player do
+   --
+   -- There are cases where we need to queue the player to be teleported to some location 
+   -- on the next frame; this handles that.
+   --
    if current_player.biped != no_object then
-      if current_player.biped.is_of_type(monitor) then
-         current_player.apply_traits(monitor_traits)
-      altif current_player.anchor != no_object then
-         --
-         -- We have a custom game option which lets players pick between preserving their 
-         -- momentum when switching from Monitor to Biped, or preserving their armor cust-
-         -- omizations. In the latter case, we accomplish that by deleting their biped to 
-         -- forcibly spawn a new biped on the next frame; we then teleport that new biped 
-         -- to their previous position (the "anchor").
-         --
-         current_player.biped.attach_to(current_player.anchor, 0, 0, 0, relative)
-         current_player.biped.detach()
-         current_player.biped.copy_rotation_from(current_player.anchor, false)
-         current_player.anchor.delete()
+      current_player.biped.attach_to(current_player.queued_teleport, 0, 0, 0, relative)
+      current_player.biped.detach()
+      current_player.biped.copy_rotation_from(current_player.queued_teleport, false)
+      current_player.queued_teleport.delete()
+   end
+end
+for each player do -- handling for player monitors
+   if current_player.biped.is_of_type(monitor) then
+      current_player.apply_traits(monitor_traits)
+      --
+      -- Sometimes, the player can swap bipeds in a REALLY bad location out-of-map, 
+      -- such that we can't spawn an Active Camo AA at them.
+      --
+      alias aa    = temp_obj_00
+      alias spawn = temp_obj_01
+      --
+      aa = current_player.get_armor_ability()
+      if aa != no_object then
+         current_player.failsafe_on = 0
+      end
+      if aa == no_object then
+         spawn = no_object
+         if current_player.failsafe_on == 0 then
+            for each object with label all_initial_spawns do
+               if not current_object.is_out_of_bounds() then
+                  spawn = current_object
+               end
+            end
+            current_player.failsafe_on = 1
+         end
+         if spawn == no_object then
+            current_player.biped.delete()
+            game.show_message_to(current_player, none, "You didn't have an AA. Returned you to the map as a failsafe.")
+         end
+         if spawn != no_object then
+            current_player.queued_teleport = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+            current_player.queued_teleport.copy_rotation_from(current_player.biped, false)
+            current_player.queued_teleport.attach_to(current_player.biped, 0, 0, 0, relative)
+            current_player.queued_teleport.detach()
+            --
+            current_player.biped.attach_to(spawn, 0, 0, 0, relative)
+            current_player.biped.detach()
+            --
+            spawn.place_at_me(active_camo_aa, none, none, 0, 0, 2, none)
+         end
       end
    end
 end
-for each player do
+for each player do -- handle Armor Ability as script function selector
    if current_player.biped != no_object then
       current_player.biped.set_invincibility(1)
       current_player.func_timer.set_rate(0%)
@@ -127,10 +172,10 @@ for each player do
                if current_player.biped.is_of_type(monitor) then
                   alias aa = temp_obj_01
                   --
-                  current_player.anchor = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-                  current_player.anchor.attach_to(current_player.biped, 0, 0, 0, relative)
-                  current_player.anchor.detach()
-                  current_player.anchor.copy_rotation_from(current_player.biped, false)
+                  current_player.queued_teleport = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+                  current_player.queued_teleport.attach_to(current_player.biped, 0, 0, 0, relative)
+                  current_player.queued_teleport.detach()
+                  current_player.queued_teleport.copy_rotation_from(current_player.biped, false)
                   aa = current_player.get_armor_ability()
                   aa.delete()
                   current_player.biped.delete()
@@ -140,12 +185,20 @@ for each player do
                   if not current_player.biped.is_of_type(monitor) then
                      alias witness = new_biped
                      alias light   = temp_obj_00
+                     alias noclip  = temp_obj_02
                      --
                      witness = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
-                     --light   = witness.place_at_me(light_purple, none, none, 0, 0, 0, none)
-                     --light.set_scale(8)
-                     --light.attach_to(witness, 1, 0, 0, relative)
-                     --witness.eye_light = light
+                     if opt_monitor_skin == monitor_skins.exuberant then
+                        light   = witness.place_at_me(light_purple, none, none, 0, 0, 0, none)
+                        light.set_scale(8)
+                        noclip  = witness.place_at_me(flag_stand, "_monitor_vfx", none, 0, 0, 0, none)
+                        noclip.set_scale(1)
+                        light.attach_to(noclip, 0, 0, 0, relative)
+                        noclip.attach_to(witness, 1, 0, 0, relative)
+                        witness.eye_light = noclip
+                        witness.eye_timer = 1
+                        noclip.eye_light  = witness
+                     end
                      --
                      temp_int_00 = 1
                   end
@@ -157,7 +210,7 @@ for each player do
                   old_biped = current_player.biped
                   current_player.set_biped(new_biped)
                   old_biped.delete()
-                  current_player.biped.place_at_me(active_camo_aa, none, none, 0, 0, 2, none)
+                  current_player.biped.place_at_me(active_camo_aa, none, never_garbage_collect, 0, 0, 2, none)
                end
             end
             if current_player.func_stage == func_stage.warp then
@@ -185,32 +238,19 @@ for each player do -- handle invulnerability and deletion
    end
 end
 
--- TEST: attach a purple light to a monitor to make exuberant witness
-for each player do
-   alias witness = temp_obj_01
-   alias light   = temp_obj_00
-   alias noclip  = temp_obj_02
-   if current_player.number[1] == 0 and current_player.biped != no_object then
-      current_player.number[1] = 1
-      --
-      witness = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
-      light   = witness.place_at_me(light_purple, none, none, 0, 0, 0, none)
-      light.set_scale(8)
-      noclip  = witness.place_at_me(flag_stand, "_monitor_vfx", none, 0, 0, 0, none)
-      noclip.set_scale(1)
-      light.attach_to(noclip, 0, 0, 0, relative)
-      noclip.attach_to(witness, 1, 0, 0, relative)
-      witness.eye_light = noclip
-      witness.eye_timer = 1
-      noclip.eye_light  = witness
-   end
-end
-
+--
+-- Code for the Exuberant Witness monitor skin.
 --
 -- Monitors bob up and down due to an animation baked into their model. Specifically, 
 -- they bob from neutral to down and back to neutral, over the course of one second, 
 -- and then from neutral to up and back to neutral over the course of the next second. 
 -- The total bob distance in either direction appears to be about 0.1 Forge units.
+--
+-- There's really no good way to handle this. We can't intentionally and consistently 
+-- attach something to the Monitor skeleton node that bobs up and down: attachment 
+-- will anchor an object to the nearest node, but all of a Monitor's nodes have the 
+-- same coordinates. We're just gonna have to update the decorative light's position 
+-- by hand every script tick. Ugly, I know.
 --
 for each object with label "_monitor_vfx" do
    if current_object.eye_light == no_object then -- owning Monitor was destroyed?
@@ -241,14 +281,23 @@ for each object do -- try to sync Monitor eye-lights with Monitor bobbing animat
          alias counter = temp_int_00
          --
          node_n = current_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-         node_c = no_object
          node_p = current_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-         node_p.attach_to(current_object, 1, 0, 0, relative)
+         node_c = no_object
          if light.eye_counter < 0 then
             node_n.attach_to(current_object, 1, 0, -1, relative)
+            node_p.attach_to(current_object, 0, 0, -1, relative)
          alt
             node_n.attach_to(current_object, 1, 0,  1, relative)
+            node_p.attach_to(current_object, 0, 0,  1, relative)
          end
+         node_c = node_n.place_between_me_and(node_p, hill_marker, 0) -- we want the light to be at X-offset 0.5 to fit it perfectly into the Monitor's eye
+         node_n.delete()
+         node_p.delete()
+         node_n = node_c
+         node_c = no_object
+         --
+         node_p = current_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+         node_p.attach_to(current_object, 1, 0, 0, relative)
          --
          function _halve_max_distance()
             node_c = node_n.place_between_me_and(node_p, hill_marker, 0)
@@ -257,6 +306,7 @@ for each object do -- try to sync Monitor eye-lights with Monitor bobbing animat
             node_c = no_object
          end
          _halve_max_distance()
+         _halve_max_distance() -- good enough
          --
          node_p.eye_counter = 0
          node_n.eye_counter = 10
