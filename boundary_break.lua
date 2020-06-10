@@ -7,11 +7,18 @@ alias ui_aa_warp_b = script_widget[1]
 -- Unnamed Forge labels:
 alias all_initial_spawns = 0
 
+-- BUG: swapping bipeds retains the old facing direction of the biped 
+-- being recalled from storage
+--
+-- no in-game action seems to be able to prevent this; copy_rotation_from, 
+-- face_toward, etc., have no visible effect; we should run laboratory tests 
+-- on them using bipeds that have/have not been controlled by any player before
+
 enum func_stage
    none
-   swap
-   warp
-   reset
+   swap  -- swap between being a Monitor and being a Spartan/Elite
+   warp  -- teleport forward a short distance; useful for breaking barriers
+   reset -- reset to a spawn point somewhere in the map
 end
 
 alias temp_int_00  = global.number[0]
@@ -19,10 +26,12 @@ alias temp_int_01  = global.number[1]
 alias temp_obj_00  = global.object[0]
 alias temp_obj_01  = global.object[1]
 alias temp_obj_02  = global.object[2]
+alias storage      = global.object[3]
 alias temp_plr_00  = global.player[0]
 alias func_stage   = player.number[0] -- see (func_stage) enum
 alias failsafe_on  = player.number[1]
-alias queued_teleport       = player.object[0]
+alias stored_biped = player.object[0]
+alias move_to_next = player.object[1] -- marker to move the player to on the next frame
 alias func_timer   = player.timer[0]
 alias ui_timer     = player.timer[1]
 
@@ -31,9 +40,11 @@ declare temp_int_01 with network priority local
 declare temp_obj_00 with network priority local
 declare temp_obj_01 with network priority local
 declare temp_obj_02 with network priority local
+declare storage     with network priority low
 declare temp_plr_00 with network priority local
-declare player.func_stage      with network priority low = func_stage.none
-declare player.queued_teleport with network priority low
+declare player.func_stage   with network priority low = func_stage.none
+declare player.stored_biped with network priority low
+declare player.move_to_next with network priority low
 declare player.func_timer = 10
 declare player.ui_timer   = 10
 
@@ -46,30 +57,38 @@ for each player do -- loadout palettes
    end
 end
 
+for each player do -- create storage marker
+   --
+   -- When the player wants to swap between Monitor and normal bipeds, we recycle 
+   -- bipeds so that weapons and items that the player picks up aren't deleted. We 
+   -- need someplace to store the bipeds where we know they won't be messed with; 
+   -- conveniently, attaching objects to Hill Markers renders the attached objects 
+   -- invisible and incorporeal.
+   --
+   if storage == no_object and current_player.biped != no_object then
+      storage = current_player.biped.place_at_me(hill_marker, none, never_garbage_collect, 0, 0, 0, none)
+      storage.attach_to(current_player.biped, 0, 0, 1, absolute)
+      storage.detach()
+   end
+end
+
 for each player do
+   alias queued_to   = temp_obj_00
+   alias prior_biped = temp_obj_01
    --
    -- There are cases where we need to queue the player to be teleported to some location 
    -- on the next frame; this handles that.
    --
-   if current_player.biped != no_object and current_player.queued_teleport != no_object then
-      current_player.biped.attach_to(current_player.queued_teleport, 0, 0, 0, relative)
-      current_player.biped.detach()
-      current_player.biped.copy_rotation_from(current_player.queued_teleport, false)
-      if current_player.queued_teleport.is_of_type(monitor) then
-         --
-         -- Special case used to preserve momentum when switching from a Monitor back to a 
-         -- combatant biped.
-         --
-         temp_obj_00 = current_player.biped
-         temp_obj_01 = current_player.queued_teleport.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-         temp_obj_01.attach_to(current_player.queued_teleport, 10, 0, 0, relative)
-         temp_obj_01.detach()
-         current_player.set_biped(current_player.queued_teleport)
-         temp_obj_00.face_toward(temp_obj_01, 0, 0, 0) -- BUG: THIS AND copy_rotation_from DO NOTHING; PLAYER RETAINS THEIR ORIGINAL SPAWNING ROTATION
-         temp_obj_01.delete()
-         current_player.set_biped(temp_obj_00)
+   if current_player.biped != no_object then
+      queued_to   = current_player.move_to_next
+      prior_biped = current_player.biped
+      current_player.move_to_next = no_object
+      if queued_to != no_object then
+         prior_biped.copy_rotation_from(queued_to, false)
+         prior_biped.attach_to(queued_to, 0, 0, 0, absolute)
+         prior_biped.detach()
+         queued_to.delete()
       end
-      current_player.queued_teleport.delete()
    end
 end
 for each player do -- handling for player monitors
@@ -98,18 +117,19 @@ for each player do -- handling for player monitors
          end
          if spawn == no_object then
             current_player.biped.delete()
+            current_player.stored_biped.delete()
             game.show_message_to(current_player, none, "You didn't have an AA. Returned you to the map as a failsafe.")
          end
          if spawn != no_object then
-            current_player.queued_teleport = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-            current_player.queued_teleport.copy_rotation_from(current_player.biped, false)
-            current_player.queued_teleport.attach_to(current_player.biped, 0, 0, 0, relative)
-            current_player.queued_teleport.detach()
+            current_player.move_to_next = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+            current_player.move_to_next.copy_rotation_from(current_player.biped, false)
+            current_player.move_to_next.attach_to(current_player.biped, 0, 0, 0, relative)
+            current_player.move_to_next.detach()
             --
             current_player.biped.attach_to(spawn, 0, 0, 0, relative)
             current_player.biped.detach()
             --
-            spawn.place_at_me(active_camo_aa, none, none, 0, 0, 2, none)
+            spawn.place_at_me(active_camo_aa, none, none, 0, 0, 1, none)
          end
       end
    end
@@ -162,59 +182,73 @@ for each player do -- handle Armor Ability as script function selector
             current_player.func_timer.reset()
             current_player.func_timer.set_rate(0%)
             if current_player.func_stage == func_stage.swap then
-               alias old_biped = temp_obj_00
-               alias new_biped = temp_obj_01
+               alias else_flag = temp_int_00
+               alias recall    = temp_obj_00
+               alias store     = temp_obj_01
+               alias facing    = temp_obj_02
                --
-               temp_int_00 = 0
-               if current_player.biped.is_of_type(monitor) then
-                  alias aa = temp_obj_01
+               function _recall_from_storage()
+                  recall.detach()
+                  recall.copy_rotation_from(store, true)
+                  recall.attach_to(store, 0, 0, 0, relative)
+                  recall.detach()
+                  current_player.set_biped(recall)
                   --
-                  aa = current_player.get_armor_ability()
-                  aa.delete()
-                  current_player.queued_teleport = current_player.biped
-                  --
-                  -- The straightforward approach to this would be to spawn a "queued teleport marker" 
-                  -- at the player's current biped, and then delete that biped. However, we want to 
-                  -- preserve the player's momentum through the biped switch. The best way to do that 
-                  -- is to, instead of deleting their biped, simply force them to abandon it: set the 
-                  -- current biped AS the player's current queued teleport marker, and then force the 
-                  -- player into a new biped which we delete immediately.
-                  --
-                  -- When we handle the queued teleport marker, we will check if it is a biped; if so, 
-                  -- we will force the player into it, move their biped to it, force them back into 
-                  -- their biped, and then delete the "marker."
-                  --
-                  temp_obj_00 = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
-                  current_player.set_biped(temp_obj_00)
-                  current_player.biped.delete()
-                  temp_int_00 = 1
+                  current_player.stored_biped = store
+                  store.attach_to(storage, 0, 0, 0, absolute)
                end
-               if temp_int_00 == 0 then
-                  if not current_player.biped.is_of_type(monitor) then
-                     new_biped   = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
-                     temp_int_00 = 1
+               function _enter_into_storage()
+                  current_player.stored_biped = store
+                  current_player.set_biped(recall)
+                  store.attach_to(storage, 0, 0, 0, absolute)
+               end
+               --
+               else_flag = 0
+               recall    = current_player.stored_biped
+               store     = current_player.biped
+               if store.is_of_type(monitor) then
+                  --
+                  -- Switch from a Monitor to a combat biped.
+                  --
+                  if recall == no_object then -- if no existing combat biped available
+                     recall = current_player.biped.place_at_me(spartan, none, none, 0, 0, 0, female)
+                     _enter_into_storage()
+                     --
+                     else_flag = 1
                   end
-                  if temp_int_00 == 0 then
-                     new_biped = current_player.biped.place_at_me(spartan, none, none, 0, 0, 0, female)
+                  if else_flag == 0 then -- else, recall existing combat biped
+                     _recall_from_storage()
+                     else_flag = 1
                   end
-                  new_biped.attach_to(current_player.biped, 0, 0, 8, relative)
-                  new_biped.detach()
-                  old_biped = current_player.biped
-                  current_player.set_biped(new_biped)
-                  old_biped.delete()
-                  current_player.biped.place_at_me(active_camo_aa, none, never_garbage_collect, 0, 0, 2, none)
+               end
+               if else_flag == 0 then
+                  --
+                  -- Switch from a combat biped to a Monitor.
+                  --
+                  if current_player.stored_biped == no_object then -- if no existing Monitor biped available
+                     recall = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
+                     _enter_into_storage()
+                     --
+                     else_flag = 1
+                  end
+                  if else_flag == 0 then -- else, recall existing Monitor biped
+                     _recall_from_storage()
+                  end
                end
             end
             if current_player.func_stage == func_stage.warp then
-               temp_obj_00 = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-               temp_obj_00.attach_to(current_player.biped, 50, 0, 0, relative)
-               temp_obj_00.detach()
-               current_player.biped.attach_to(temp_obj_00, 0, 0, 0, relative)
+               alias warp_marker = temp_obj_00
+               --
+               warp_marker = current_player.biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+               warp_marker.attach_to(current_player.biped, 50, 0, 0, relative)
+               warp_marker.detach()
+               current_player.biped.attach_to(warp_marker, 0, 0, 0, relative)
                current_player.biped.detach()
-               temp_obj_00.delete()
+               warp_marker.delete()
             end
             if current_player.func_stage == func_stage.reset then
                current_player.biped.delete()
+               current_player.stored_biped.delete()
             end
             current_player.func_stage = func_stage.none
          end
@@ -223,6 +257,7 @@ for each player do -- handle Armor Ability as script function selector
 end
 for each player do -- handle invulnerability and deletion
    current_player.biped.set_invincibility(1) -- do this after any biped swap to prevent single frames of vulnerability
+   current_player.stored_biped.set_invincibility(1)
    if current_player.biped == no_object then
       current_player.func_stage = func_stage.none
       current_player.func_timer.set_rate(0%)
