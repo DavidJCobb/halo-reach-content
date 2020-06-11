@@ -1,4 +1,12 @@
 
+enum monitor_gear_pref
+   show
+   hide_aa
+   hide_all
+end
+
+alias opt_hide_monitor_gear = script_option[0]
+
 alias monitor_traits = script_traits[0]
 
 alias ui_aa_warp_a = script_widget[0]
@@ -7,19 +15,44 @@ alias ui_aa_warp_b = script_widget[1]
 -- Unnamed Forge labels:
 alias all_initial_spawns = 0
 
--- BUG: swapping bipeds retains the old facing direction of the biped 
--- being recalled from storage
---
--- no in-game action seems to be able to prevent this; copy_rotation_from, 
--- face_toward, etc., have no visible effect; we should run laboratory tests 
--- on them using bipeds that have/have not been controlled by any player before
-
 enum func_stage
    none
    swap  -- swap between being a Monitor and being a Spartan/Elite
    warp  -- teleport forward a short distance; useful for breaking barriers
    reset -- reset to a spawn point somewhere in the map
+   swap_in_progress
 end
+
+--
+-- Biped swaps work as follows:
+--
+-- Instead of creating and destroying bipeds for the player, we try to hold onto 
+-- old bipeds and recycle them. Specifically, the player has at any given moment 
+-- one "stored biped" in addition to their current biped. If the player is curr-
+-- ently a Monitor, then the stored biped is a Spartan or Elite, and vice versa. 
+--
+-- We can "store" bipeds by attaching them to Hill Markers. This renders them 
+-- invisible and incorporeal, with the sole unfortunate side-effect that storing 
+-- a Monitor may result in its whirring noise being audible when standing near 
+-- the Hill Marker.
+--
+-- This approach is enough to ensure that we don't delete items that the player 
+-- has picked up off the map when swapping their bipeds. Moreover, if we carry 
+-- out the biped swap quickly (such that there is never a frame in which the 
+-- player is not in control of a biped), then we can even preserve momentum 
+-- through the swap. However, we cannot preserve the player's facing direction. 
+-- It seems that if a biped has previously been controlled by the player, and we 
+-- rotate it through script on the same frame that we place the player inside of 
+-- it, then the rotation fails and it retains the last facing direction it had. 
+-- This doesn't seem to affect Monitors, but it very much affects Spartans and 
+-- likely Elites.
+--
+-- As such, we need to carry out the biped swap over multiple frames. On the 
+-- first frame of the swap, we recall the player's old biped (the "target") from 
+-- storage, move it to the player's current biped (the "subject"), and then we 
+-- queue to finish the action on the next frame. On that next frame, we have the 
+-- player possess the target and we place the subject into storage.
+--
 
 alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[1]
@@ -28,6 +61,7 @@ alias temp_obj_01  = global.object[1]
 alias temp_obj_02  = global.object[2]
 alias storage      = global.object[3]
 alias temp_plr_00  = global.player[0]
+alias is_scaled    = object.number[0]
 alias func_stage   = player.number[0] -- see (func_stage) enum
 alias failsafe_on  = player.number[1]
 alias stored_biped = player.object[0]
@@ -42,6 +76,7 @@ declare temp_obj_01 with network priority local
 declare temp_obj_02 with network priority local
 declare storage     with network priority low
 declare temp_plr_00 with network priority local
+declare object.is_scaled    with network priority low
 declare player.func_stage   with network priority low = func_stage.none
 declare player.stored_biped with network priority low
 declare player.move_to_next with network priority low
@@ -49,6 +84,7 @@ declare player.func_timer = 10
 declare player.ui_timer   = 10
 
 for each player do -- loadout palettes
+   current_player.set_round_card_title("Activate your Active Camo for different lengths\nof time to use different functions.")
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
    end
@@ -72,7 +108,56 @@ for each player do -- create storage marker
    end
 end
 
-for each player do
+for each player do -- finish a biped swap-in-progress
+   alias store = temp_obj_00
+   if current_player.func_stage == func_stage.swap_in_progress then
+      store = current_player.biped
+      current_player.set_biped(current_player.stored_biped)
+      store.attach_to(storage, 0, 0, 0, absolute)
+      current_player.stored_biped = store
+      --
+      current_player.func_stage = func_stage.none
+   end
+end
+
+if opt_hide_monitor_gear != monitor_gear_pref.show then
+   --
+   -- Code for hiding Monitors' equipped items, per a Custom Game option.
+   --
+   for each object do -- revert scaling on items the Monitor drops
+      if current_object.is_scaled == 1 then
+         temp_plr_00 = current_object.get_carrier()
+         if temp_plr_00 == no_player then
+            current_object.is_scaled = 0
+            current_object.set_scale(100)
+         end
+      end
+   end
+   for each player do -- apply scaling to items the Monitor is carrying
+      if current_player.biped.is_of_type(monitor) then
+         --
+         -- When a Monitor has an Armor Ability equipped, the ability continues to 
+         -- project its holographic icon, and scaling the ability does not scale 
+         -- the icon.
+         --
+         temp_obj_00 = current_player.get_armor_ability()
+         temp_obj_00.detach()
+         temp_obj_00.attach_to(storage, 0, 0, 0, absolute)
+         temp_obj_00.is_scaled = 1
+         --
+         if opt_hide_monitor_gear == monitor_gear_pref.hide_all then
+            temp_obj_00 = current_player.get_weapon(primary)
+            temp_obj_00.set_scale(1)
+            temp_obj_00.is_scaled = 1
+            temp_obj_00 = current_player.get_weapon(secondary)
+            temp_obj_00.set_scale(1)
+            temp_obj_00.is_scaled = 1
+         end
+      end
+   end
+end
+
+for each player do -- handle queued teleports
    alias queued_to   = temp_obj_00
    alias prior_biped = temp_obj_01
    --
@@ -182,59 +267,22 @@ for each player do -- handle Armor Ability as script function selector
             current_player.func_timer.reset()
             current_player.func_timer.set_rate(0%)
             if current_player.func_stage == func_stage.swap then
-               alias else_flag = temp_int_00
-               alias recall    = temp_obj_00
-               alias store     = temp_obj_01
-               alias facing    = temp_obj_02
-               --
-               function _recall_from_storage()
-                  recall.detach()
-                  recall.copy_rotation_from(store, true)
-                  recall.attach_to(store, 0, 0, 0, relative)
-                  recall.detach()
-                  current_player.set_biped(recall)
-                  --
-                  current_player.stored_biped = store
-                  store.attach_to(storage, 0, 0, 0, absolute)
-               end
-               function _enter_into_storage()
-                  current_player.stored_biped = store
-                  current_player.set_biped(recall)
-                  store.attach_to(storage, 0, 0, 0, absolute)
-               end
-               --
-               else_flag = 0
-               recall    = current_player.stored_biped
-               store     = current_player.biped
-               if store.is_of_type(monitor) then
-                  --
-                  -- Switch from a Monitor to a combat biped.
-                  --
-                  if recall == no_object then -- if no existing combat biped available
-                     recall = current_player.biped.place_at_me(spartan, none, none, 0, 0, 0, female)
-                     _enter_into_storage()
+               if current_player.stored_biped == no_object then
+                  if current_player.biped.is_of_type(monitor) then
                      --
-                     else_flag = 1
-                  end
-                  if else_flag == 0 then -- else, recall existing combat biped
-                     _recall_from_storage()
-                     else_flag = 1
-                  end
-               end
-               if else_flag == 0 then
-                  --
-                  -- Switch from a combat biped to a Monitor.
-                  --
-                  if current_player.stored_biped == no_object then -- if no existing Monitor biped available
-                     recall = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
-                     _enter_into_storage()
+                     -- The player should never be missing a combat biped, but on the off chance 
+                     -- they are, spawn an emergency one.
                      --
-                     else_flag = 1
-                  end
-                  if else_flag == 0 then -- else, recall existing Monitor biped
-                     _recall_from_storage()
+                     current_player.stored_biped = current_player.biped.place_at_me(spartan, none, none, 0, 0, 0, female)
+                  alt
+                     current_player.stored_biped = current_player.biped.place_at_me(monitor, none, none, 0, 0, 0, none)
                   end
                end
+               current_player.stored_biped.detach()
+               current_player.stored_biped.attach_to(current_player.biped, 0, 0, 0, absolute)
+               current_player.stored_biped.detach()
+               current_player.stored_biped.copy_rotation_from(current_player.biped, false)
+               current_player.func_stage = func_stage.swap_in_progress
             end
             if current_player.func_stage == func_stage.warp then
                alias warp_marker = temp_obj_00
@@ -250,7 +298,10 @@ for each player do -- handle Armor Ability as script function selector
                current_player.biped.delete()
                current_player.stored_biped.delete()
             end
-            current_player.func_stage = func_stage.none
+            --
+            if current_player.func_stage != func_stage.swap_in_progress then
+               current_player.func_stage = func_stage.none
+            end
          end
       end
    end
@@ -263,4 +314,8 @@ for each player do -- handle invulnerability and deletion
       current_player.func_timer.set_rate(0%)
       current_player.func_timer.reset()
    end
+end
+
+if game.round_time_limit > 0 and game.round_timer.is_zero() then -- round timer
+   game.end_round()
 end
