@@ -89,7 +89,7 @@ declare player.func_timer = 10
 declare player.ui_timer   = 10
 
 for each player do -- loadout palettes
-   current_player.set_round_card_title("Activate your Active Camo for different lengths\nof time to use different functions.")
+   current_player.set_round_card_title("Activate your Active Camo for different\nlengths of time to use different functions.")
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
    end
@@ -271,9 +271,8 @@ for each player do -- handling for player monitors
       end
    end
 end
-for each player do -- handle biped properties and Armor Ability as script function selector (including UI)
+for each player do -- handle Armor Ability as script function selector (including UI)
    if current_player.biped != no_object then
-      current_player.biped.set_invincibility(1)
       current_player.biped.set_shape(cylinder, 50, 15, 15) -- for opt_show_warp_distance
       --
       current_player.func_timer.set_rate(0%)
