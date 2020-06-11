@@ -1,11 +1,14 @@
 
+alias MAX_INT = 32767
+
 enum monitor_gear_pref
    show
    hide_aa
    hide_all
 end
 
-alias opt_hide_monitor_gear = script_option[0]
+alias opt_hide_monitor_gear  = script_option[0]
+alias opt_show_warp_distance = script_option[1]
 
 alias monitor_traits = script_traits[0]
 
@@ -56,10 +59,12 @@ end
 
 alias temp_int_00  = global.number[0]
 alias temp_int_01  = global.number[1]
+alias temp_int_02  = global.number[2]
 alias temp_obj_00  = global.object[0]
 alias temp_obj_01  = global.object[1]
 alias temp_obj_02  = global.object[2]
 alias storage      = global.object[3]
+alias aa_storage   = global.object[4]
 alias temp_plr_00  = global.player[0]
 alias is_scaled    = object.number[0]
 alias func_stage   = player.number[0] -- see (func_stage) enum
@@ -107,6 +112,46 @@ for each player do -- create storage marker
       storage.detach()
    end
 end
+if aa_storage == no_object then
+   --
+   -- Unlike all other known objects, player-equipped Armor Abilities do not turn 
+   -- invisible or intangible when attached to Hill Markers. This means that in 
+   -- order to hide a Monitor's equipped Armor Ability, we can't simply attach it 
+   -- to any old marker; we need to move it somewhere entirely out of sight.
+   --
+   -- Let's try to find the lowest Initial Spawn Point on the map... and then 
+   -- create a storage marker below that.
+   --
+   alias basis  = temp_obj_00
+   alias above  = temp_obj_01
+   alias lowest_object = temp_obj_02
+   alias lowest_height = temp_int_00
+   alias dist   = temp_int_01
+   alias check  = temp_int_02
+   --
+   lowest_object = no_object
+   lowest_height = MAX_INT
+   basis  = lowest_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+   above  = basis.place_at_me(hill_marker, none, none, 0, 0, 127, none)
+   --
+   for each object with label all_initial_spawns do
+      temp_int_01 = current_object.get_distance_to(basis)
+      temp_int_02 = current_object.get_distance_to(above)
+      if temp_int_02 > temp_int_01 then -- (current_object) is below (basis)
+         temp_int_01 *= -1
+      end
+      if temp_int_01 < lowest_height then
+         lowest_object = current_object
+         lowest_height = temp_int_01
+      end
+   end
+   basis.delete()
+   above.delete()
+   --
+   aa_storage = lowest_object.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+   aa_storage.attach_to(lowest_object, 0, 0, -50, absolute)
+   aa_storage.detach()
+end
 
 for each player do -- finish a biped swap-in-progress
    alias store = temp_obj_00
@@ -125,7 +170,7 @@ if opt_hide_monitor_gear != monitor_gear_pref.show then
    -- Code for hiding Monitors' equipped items, per a Custom Game option.
    --
    for each object do -- revert scaling on items the Monitor drops
-      if current_object.is_scaled == 1 then
+      if current_object.is_scaled == 1 and not current_object.is_of_type(active_camo_aa) then
          temp_plr_00 = current_object.get_carrier()
          if temp_plr_00 == no_player then
             current_object.is_scaled = 0
@@ -138,12 +183,19 @@ if opt_hide_monitor_gear != monitor_gear_pref.show then
          --
          -- When a Monitor has an Armor Ability equipped, the ability continues to 
          -- project its holographic icon, and scaling the ability does not scale 
-         -- the icon.
+         -- the icon. Moreover, equipped Armor Abilities apparently don't undergo 
+         -- the usual changes seen when attaching objects to Hill Markers: they 
+         -- don't become invisible or intangible. We thus need to move them out of 
+         -- sight, and we need to do so every frame to ensure they don't fall too 
+         -- far out of the map.
+         --
+         -- Detaching them has the unfortunate side effect of locking the radar 
+         -- jamming effect to the place we're moving them to (as opposed to keeping 
+         -- that centered on the player or stopping it entirely).
          --
          temp_obj_00 = current_player.get_armor_ability()
          temp_obj_00.detach()
-         temp_obj_00.attach_to(storage, 0, 0, 0, absolute)
-         temp_obj_00.is_scaled = 1
+         temp_obj_00.attach_to(aa_storage, 0, 0, 0, absolute)
          --
          if opt_hide_monitor_gear == monitor_gear_pref.hide_all then
             temp_obj_00 = current_player.get_weapon(primary)
@@ -219,11 +271,14 @@ for each player do -- handling for player monitors
       end
    end
 end
-for each player do -- handle Armor Ability as script function selector
+for each player do -- handle biped properties and Armor Ability as script function selector (including UI)
    if current_player.biped != no_object then
       current_player.biped.set_invincibility(1)
+      current_player.biped.set_shape(cylinder, 50, 15, 15) -- for opt_show_warp_distance
+      --
       current_player.func_timer.set_rate(0%)
       current_player.ui_timer.set_rate(0%)
+      current_player.biped.set_shape_visibility(no_one)
       ui_aa_warp_a.set_visibility(current_player, false)
       ui_aa_warp_b.set_visibility(current_player, false)
       ui_aa_warp_a.set_text("Swap Biped | Warp Forward")
@@ -259,6 +314,10 @@ for each player do -- handle Armor Ability as script function selector
             if current_player.func_stage == func_stage.warp then
                current_player.func_timer.set_rate(-400%)
                current_player.ui_timer.set_rate(400%)
+               --
+               if opt_show_warp_distance == 1 then
+                  current_player.biped.set_shape_visibility(mod_player, current_player, 1)
+               end
             end
          alt
             --
