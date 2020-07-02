@@ -9,9 +9,6 @@
 --
 
 --
--- TODO: consider adding a script option which controls whether you're allowed 
---       to put yourself in check.
---
 -- TODO: Spawn a "tray" of pieces behind each team. Halo Chess doesn't give you 
 --       waypoints on each individual enemy piece; rather, the tray contains one 
 --       rook, one knight, one bishop, and one queen, and you get waypoints on 
@@ -1760,18 +1757,25 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          --
          alias t_o_min    = temp_int_00
          alias t_o_max    = temp_int_01
+         alias max_all    = temp_int_03
          alias min_player = temp_plr_01
          t_o_min = MAX_INT
          t_o_max = -1
+         max_all = -1
          temp_plr_01 = no_player
          for each player do
-            if current_player.turn_order > -1 and current_player.team == active_team then
-               if current_player.turn_order < t_o_min then
-                  t_o_min    = current_player.turn_order
-                  min_player = current_player
+            if current_player.turn_order > -1 then
+               if current_player.turn_order > max_all then
+                  max_all = current_player.turn_order
                end
-               if current_player.turn_order > t_o_max then
-                  t_o_max = current_player.turn_order
+               if current_player.team == active_team then
+                  if current_player.turn_order < t_o_min then
+                     t_o_min    = current_player.turn_order
+                     min_player = current_player
+                  end
+                  if current_player.turn_order > t_o_max then
+                     t_o_max = current_player.turn_order
+                  end
                end
             end
          end
@@ -1790,8 +1794,8 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
                -- This player doesn't have a turn-order value. Let's give them 
                -- one.
                --
-               t_o_max += 1
-               current_player.turn_order = t_o_max
+               max_all += 1
+               current_player.turn_order = max_all
                if min_player == no_player then
                   --
                   -- If no players had turn-order values in the earlier loop, 

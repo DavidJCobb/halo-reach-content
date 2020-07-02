@@ -19,12 +19,6 @@
 --
 -- TODO: Strongly consider implementing a turn clock like in Halo Chess.
 --
--- TODO:
---
---  - Test the quit behavior.
---
---     - Test results will not be meaningful until player turn order works
---
 
 alias board_size         = 9
 alias desired_mine_count = 10
@@ -37,6 +31,7 @@ alias opt_points_win     = script_option[0]
 alias opt_points_loss    = script_option[1]
 alias opt_points_flag    = script_option[2]
 alias opt_points_space   = script_option[3]
+alias opt_turn_clock     = script_option[4]
 alias active_player_traits = script_traits[0]
 alias spectator_traits     = script_traits[1]
 
@@ -66,11 +61,15 @@ declare first_cell   with network priority local
 alias active_player   = global.player[0] -- the player currently trying to solve the board; for team games, please use another variable
 alias active_team     = global.team[0]
 alias active_teammate = global.number[5]
+alias turn_clock      = global.timer[2]
 alias turn_order      = player.number[2]
+alias skipped_a_turn  = player.number[3] -- the player failed to make a move before the turn clock ran out
 declare active_player     with network priority high
 declare active_team       with network priority low
 declare active_teammate   with network priority high
 declare player.turn_order with network priority low -- pn1
+declare player.skipped_a_turn with network priority low
+declare turn_clock = opt_turn_clock
 --
 alias ui_next_active_player_a = global.player[3]
 alias ui_next_active_player_b = global.player[4]
@@ -148,6 +147,7 @@ declare game_failure_timer           = 7
 alias ui_current_player = script_widget[0]
 alias ui_how_to_play    = script_widget[1]
 alias ui_next_players   = script_widget[2]
+alias ui_turn_clock     = script_widget[3]
 
 alias stat_uncovered = player.script_stat[0]
 alias stat_plays     = player.script_stat[1]
@@ -181,6 +181,7 @@ end
 
 for each player do -- set loadout palettes and handle some UI
    ui_current_player.set_text("It's %s's turn!", active_player)
+   ui_turn_clock.set_text("Turn Clock: %s", turn_clock)
    ui_how_to_play.set_text("Shoot a space with the Magnum to uncover it.\nShoot a space with the DMR to (un)flag it.")
    if current_player.announce_start_timer.is_zero() and current_player.announced_game_start != 1 then
       current_player.announced_game_start = 1
@@ -194,8 +195,12 @@ for each player do -- set loadout palettes and handle some UI
       current_player.set_loadout_palette(spartan_tier_1)
    end
    ui_current_player.set_visibility(current_player, false)
+   ui_turn_clock.set_visibility(current_player, false)
    if current_player.biped != no_object then
       ui_current_player.set_visibility(current_player, true)
+      if opt_turn_clock > 0 then
+         ui_turn_clock.set_visibility(current_player, true)
+      end
    end
 end
 
@@ -474,15 +479,21 @@ do -- manage active player
       end
    end
    if active_player == no_player then
+      turn_clock.reset()
       if game.teams_enabled == 1 then
          alias turn_order = temp_int_00
+         alias any_moved  = temp_int_01
          alias target     = temp_plr_00 -- the player with the lowest player.turn_order that is greater than active_teammate
          alias lowest     = temp_plr_01 -- the player with the lowest player.turn_order on the team
          turn_order = MAX_INT
+         any_moved  = 0
          target     = no_player
          lowest     = no_player
          for each player do
             if current_player.team == active_team then
+               if current_player.skipped_a_turn == 0 then
+                  any_moved = 1
+               end
                if lowest == no_player or current_player.turn_order < lowest.turn_order then
                   lowest = current_player
                end
@@ -505,6 +516,12 @@ do -- manage active player
             active_player = lowest
          end
          active_teammate = active_player.turn_order
+         --
+         if any_moved == 0 then
+            active_player.stat_plays -= 1 -- to compensate for the increment just below
+            game_ending = game_ending_queued
+            game.show_message_to(all_players, none, "Everyone on %s's team skipped a turn, so they forfeit!", active_player)
+         end
       end
       if game.teams_enabled == 0 then
          --
@@ -526,6 +543,12 @@ do -- manage active player
             if current_player.stat_plays == least_plays then
                active_player = current_player
             end
+         end
+         --
+         if active_player.skipped_a_turn == 1 then
+            active_player.stat_plays -= 1 -- to compensate for the increment just below
+            game_ending = game_ending_queued
+            game.show_message_to(all_players, none, "%s failed to make a move in time!", active_player)
          end
       end
       active_player.stat_plays += 1
@@ -646,6 +669,14 @@ on local: do -- manage UI for next active players
          end
       end
    end
+end
+
+if opt_turn_clock != 0 and turn_clock.is_zero() and active_player != no_player then
+   --
+   -- Turn clock is enabled and has expired. Skip the active player's turn.
+   --
+   active_player.skipped_a_turn = 1
+   active_player = no_player
 end
 
 for each object with label "minesweep_cell_extra" do -- board graphics and interaction
@@ -793,36 +824,47 @@ for each object with label "minesweep_cell_extra" do -- board graphics and inter
          --
          -- Check what action to take based on which weapon the player had equipped.
          --
-         temp_obj_02 = active_player.get_weapon(primary)
-         if temp_obj_02.is_of_type(dmr) then -- toggle a flag
-            cell.has_flag *= -1 -- flip the bool
-            cell.has_flag +=  1 -- flip the bool
-            if cell.has_flag == 0 then
-               game.play_sound_for(active_player, announce_ctf_taken, false)
-            end
-            if cell.has_flag == 1 then
-               game.play_sound_for(active_player, announce_ctf_dropped, false)
-            end
-         end
-         if temp_obj_02.is_of_type(magnum) then -- uncover the square
-            if cell.has_flag == 0 then
-               cell.reveal_state = cell_reveal_state_yes
-               if cell.has_mine == 1 then
-                  game.show_message_to(all_players, announce_assault_armed, "Stepped on a mine!")
-                  game_ending = game_ending_queued
+         if active_player != no_player then
+            temp_obj_02 = active_player.get_weapon(primary)
+            if temp_obj_02.is_of_type(dmr) then -- toggle a flag
+               cell.has_flag *= -1 -- flip the bool
+               cell.has_flag +=  1 -- flip the bool
+               if cell.has_flag == 0 then
+                  game.play_sound_for(active_player, announce_ctf_taken, false)
                end
-               if cell.has_mine == 0 then
-                  game_state_flags |= game_state_flag_move_made
-                  if cell.adjacent_mines_count == 0 then
-                     cell.reveal_state = cell_reveal_state_recursing -- queue for recursive reveal
-                  end
-                  if cell.adjacent_mines_count > 0 then
-                     active_player.score += opt_points_space
-                  end
+               if cell.has_flag == 1 then
+                  game.play_sound_for(active_player, announce_ctf_dropped, false)
                end
             end
-            if cell.has_flag == 1 then
-               game.show_message_to(active_player, none, "To select space %nx%n, remove the flag.", cell.coord_x, cell.coord_y)
+            if temp_obj_02.is_of_type(magnum) then -- uncover the square
+               if cell.has_flag == 0 then
+                  active_player.skipped_a_turn = 0
+                  if game.teams_enabled == 1 then
+                     for each player do
+                        if current_player.team == active_player.team then
+                           active_player.skipped_a_turn = 0
+                        end
+                     end
+                  end
+                  --
+                  cell.reveal_state = cell_reveal_state_yes
+                  if cell.has_mine == 1 then
+                     game.show_message_to(all_players, announce_assault_armed, "Stepped on a mine!")
+                     game_ending = game_ending_queued
+                  end
+                  if cell.has_mine == 0 then
+                     game_state_flags |= game_state_flag_move_made
+                     if cell.adjacent_mines_count == 0 then
+                        cell.reveal_state = cell_reveal_state_recursing -- queue for recursive reveal
+                     end
+                     if cell.adjacent_mines_count > 0 then
+                        active_player.score += opt_points_space
+                     end
+                  end
+               end
+               if cell.has_flag == 1 then
+                  game.show_message_to(active_player, none, "To select space %nx%n, remove the flag.", cell.coord_x, cell.coord_y)
+               end
             end
          end
          if cell.reveal_state == cell_reveal_state_no then
