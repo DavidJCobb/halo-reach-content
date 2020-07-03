@@ -316,7 +316,7 @@ for each player do -- announce game start
    current_player.set_round_card_title("Control chess pieces to move.\nAchieve checkmate to win!")
    if current_player.announced_game_start == 0 and current_player.announce_start_timer.is_zero() then 
       send_incident(action_sack_game_start, current_player, no_player)
-      game.show_message_to(current_player, none, "Halo Chess+ v1.0.0 by Cobb!")
+      game.show_message_to(current_player, none, "Halo Chess+ v1.0.1 by Cobb!")
       current_player.announced_game_start = 1
    end
 end
@@ -1789,26 +1789,28 @@ if winning_faction == faction_none then -- handle picking a piece and handle mak
          t_o_next    = MAX_INT
          next_player = no_player
          for each player randomly do
-            if current_player.turn_order < 0 then
-               --
-               -- This player doesn't have a turn-order value. Let's give them 
-               -- one.
-               --
-               max_all += 1
-               current_player.turn_order = max_all
-               if min_player == no_player then
+            if current_player.team == active_team then -- can you imagine how bad it'd be to forget this check? can... can you imagine? haha. hahaha.
+               if current_player.turn_order < 0 then
                   --
-                  -- If no players had turn-order values in the earlier loop, 
-                  -- then there won't be a min_player. We need to have one.
+                  -- This player doesn't have a turn-order value. Let's give them 
+                  -- one.
                   --
-                  min_player = current_player
+                  max_all += 1
+                  current_player.turn_order = max_all
+                  if min_player == no_player then
+                     --
+                     -- If no players had turn-order values in the earlier loop, 
+                     -- then there won't be a min_player. We need to have one.
+                     --
+                     min_player = current_player
+                  end
                end
-            end
-            if  current_player.turn_order > active_team.turn_order 
-            and current_player.turn_order < t_o_next
-            then
-               t_o_next    = current_player.turn_order
-               next_player = current_player
+               if  current_player.turn_order > active_team.turn_order 
+               and current_player.turn_order < t_o_next
+               then
+                  t_o_next    = current_player.turn_order
+                  next_player = current_player
+               end
             end
          end
          if next_player == no_player then

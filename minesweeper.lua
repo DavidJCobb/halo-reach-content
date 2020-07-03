@@ -62,6 +62,7 @@ alias active_player   = global.player[0] -- the player currently trying to solve
 alias active_team     = global.team[0]
 alias active_teammate = global.number[5]
 alias turn_clock      = global.timer[2]
+alias ilc_delay       = global.timer[3]
 alias turn_order      = player.number[2]
 alias skipped_a_turn  = player.number[3] -- the player failed to make a move before the turn clock ran out
 declare active_player     with network priority high
@@ -70,6 +71,7 @@ declare active_teammate   with network priority high
 declare player.turn_order with network priority low -- pn1
 declare player.skipped_a_turn with network priority low
 declare turn_clock = opt_turn_clock
+declare ilc_delay  = game.loadout_cam_time
 --
 alias ui_next_active_player_a = global.player[3]
 alias ui_next_active_player_b = global.player[4]
@@ -153,6 +155,7 @@ alias stat_uncovered = player.script_stat[0]
 alias stat_plays     = player.script_stat[1]
 
 on init: do
+   ilc_delay.set_rate(-100%)
    for each player do
       current_player.set_round_card_title("Reveal all cells in the grid while avoiding \nmines!")
       current_player.announce_start_timer.set_rate(-100%)
@@ -198,7 +201,7 @@ for each player do -- set loadout palettes and handle some UI
    ui_turn_clock.set_visibility(current_player, false)
    if current_player.biped != no_object then
       ui_current_player.set_visibility(current_player, true)
-      if opt_turn_clock > 0 then
+      if opt_turn_clock > 0 and game_ending == game_ending_no then
          ui_turn_clock.set_visibility(current_player, true)
       end
    end
@@ -467,19 +470,23 @@ if game.teams_enabled == 1 then -- manage active team and set team order
       end
    end
 end
-do -- manage active player
+do -- manage active player and turn clock
+   turn_clock.set_rate(0%)
    if game_ending == game_ending_no then
       temp_int_00  = game_state_flags
       temp_int_00 &= game_state_flag_move_made
       if temp_int_00 != 0 then
+         turn_clock.reset() -- reset the turn clock if a move is made
          game_state_flags ~= game_state_flag_move_made -- clear flag
          if game.teams_enabled == 1 then
             active_player = no_player
          end
       end
+      if ilc_delay.is_zero() then
+         turn_clock.set_rate(-100%)
+      end
    end
    if active_player == no_player then
-      turn_clock.reset()
       if game.teams_enabled == 1 then
          alias turn_order = temp_int_00
          alias any_moved  = temp_int_01
@@ -517,7 +524,7 @@ do -- manage active player
          end
          active_teammate = active_player.turn_order
          --
-         if any_moved == 0 then
+         if game_ending == game_ending_no and any_moved == 0 then
             active_player.stat_plays -= 1 -- to compensate for the increment just below
             game_ending = game_ending_queued
             game.show_message_to(all_players, none, "Everyone on %s's team skipped a turn, so they forfeit!", active_player)
@@ -545,7 +552,7 @@ do -- manage active player
             end
          end
          --
-         if active_player.skipped_a_turn == 1 then
+         if game_ending == game_ending_no and active_player.skipped_a_turn == 1 then
             active_player.stat_plays -= 1 -- to compensate for the increment just below
             game_ending = game_ending_queued
             game.show_message_to(all_players, none, "%s failed to make a move in time!", active_player)
@@ -556,6 +563,7 @@ do -- manage active player
          current_player.set_player_weapons = 0
       end
    end
+   --
    active_player.apply_traits(active_player_traits)
    ui_how_to_play.set_visibility(active_player, false)
    if active_player.biped != no_object then
@@ -671,12 +679,13 @@ on local: do -- manage UI for next active players
    end
 end
 
-if opt_turn_clock != 0 and turn_clock.is_zero() and active_player != no_player then
+if opt_turn_clock != 0 and turn_clock.is_zero() and active_player != no_player and game_ending == game_ending_no then
    --
    -- Turn clock is enabled and has expired. Skip the active player's turn.
    --
    active_player.skipped_a_turn = 1
    active_player = no_player
+   turn_clock.reset() -- reset the turn clock if the turn clock runs out
 end
 
 for each object with label "minesweep_cell_extra" do -- board graphics and interaction
