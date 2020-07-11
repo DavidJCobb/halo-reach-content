@@ -316,7 +316,7 @@ for each player do -- announce game start
    current_player.set_round_card_title("Control chess pieces to move.\nAchieve checkmate to win!")
    if current_player.announced_game_start == 0 and current_player.announce_start_timer.is_zero() then 
       send_incident(action_sack_game_start, current_player, no_player)
-      game.show_message_to(current_player, none, "Halo Chess+ v1.0.1 by Cobb!")
+      game.show_message_to(current_player, none, "Halo Chess+ v1.0.2 by Cobb!")
       current_player.announced_game_start = 1
    end
 end
@@ -798,7 +798,7 @@ function check_valid_move()
    -- king, then test whether their move has put their own king in check, and 
    -- if so, revert the move.
    --
-   alias current_piece = temp_obj_00
+   alias current_piece = temp_obj_00 -- argument
    alias target_space  = temp_obj_01
    alias temporary_obj = temp_obj_02
    alias temporary_ob2 = temp_obj_03
@@ -1045,7 +1045,7 @@ function is_king_in_check()
             temp_obj_00 = current_object -- parameter for next function call
             check_valid_move()
             if king.is_valid_move == 1 then
-               king.is_valid_move = 0
+               king.is_valid_move = 0 -- clear this so that we can run checks to see if the king's allies can shield it
                king_threat = current_object
             end
          end
@@ -1056,6 +1056,7 @@ function is_king_in_check()
          --
          alias safe_space   = temp_obj_00
          alias target_space = temp_obj_01
+         safe_space = no_object
          function _set_if()
             if target_space.threatened_by == 0 then
                if target_space.piece_type == piece_type_none or target_space.owner != king.owner then
@@ -1542,6 +1543,7 @@ function end_turn()
       active_team      = team_white
       if previous_faction == faction_white then
          active_faction = faction_black
+         active_team    = no_team
          active_team    = team_black
       end
       temp_obj_00 = active_player.biped
@@ -1552,7 +1554,7 @@ function end_turn()
       active_player  = no_player
       selected_piece = no_object
       --
-      alias active_king = temp_obj_04
+      alias active_king = temp_obj_04 -- argument to next function call
       turn_clock.reset()
       turn_flags  = 0
       active_king = no_object
@@ -1580,7 +1582,7 @@ function end_turn()
             --
             temp_int_00 = faction_white
             if active_faction == faction_white then
-               active_faction = faction_black
+               temp_int_00 = faction_black
             end
             active_player = previous_player
             begin_victory() -- victory condition: checkmate
@@ -2007,7 +2009,8 @@ end
 
 
 if winning_faction != faction_none then
-   alias cell = temp_obj_00
+   alias cell          = temp_obj_00
+   alias existing_flag = temp_obj_01
    --
    if active_player == no_player or active_player.killer_type_is(quit) then
       game.end_round()
@@ -2025,6 +2028,19 @@ if winning_faction != faction_none then
                active_player.biped.delete()
             end
             active_player.set_biped(current_object.biped)
+            --
+            -- Sometimes, putting the player in control of the King at the end of the match 
+            -- can cause them to drop their flag. Not sure why. This code seems to help: we 
+            -- just force them to pick it up again.
+            --
+            existing_flag = no_object
+            for each object with label all_flags do
+               alias distance = temp_int_00
+               distance = current_object.get_distance_to(active_player.biped)
+               if distance < 10 then
+                  active_player.add_weapon(current_object)
+               end
+            end
          end
       end
    end
