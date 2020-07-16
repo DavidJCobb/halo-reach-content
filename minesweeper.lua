@@ -17,8 +17,6 @@
 --      (because the weapon is taken from you upon the turn ending, and given 
 --      to you immediately afterward upon the next turn beginning).
 --
--- TODO: Strongly consider implementing a turn clock like in Halo Chess.
---
 
 alias board_size         = 9
 alias desired_mine_count = 10
@@ -190,7 +188,7 @@ for each player do -- set loadout palettes and handle some UI
       current_player.announced_game_start = 1
       current_player.announce_start_timer.set_rate(0%)
       send_incident(action_sack_game_start, current_player, no_player)
-      game.show_message_to(current_player, none, "Minesweeper v1.0.0 by Cobb!")
+      game.show_message_to(current_player, none, "Minesweeper v1.0.2 by Cobb!")
    end
    if current_player.is_elite() then 
       current_player.set_loadout_palette(elite_tier_1)
@@ -1087,16 +1085,7 @@ do -- call recursive reveal function; check for and handle round victory
 end
 
 do -- handle round endings other than successes
-   if  game_ending == game_ending_no
-   and game.round_time_limit > 0
-   and game.round_timer.is_zero()
-   then
-      game.end_round()
-   end
-   if game_ending != game_ending_no then -- handle player failure
-      --
-      -- Award the player points as appropriate for a round failure.
-      --
+   function award_failure_points()
       active_player.score += opt_points_loss
       alias correct_flags = temp_int_00
       correct_flags = 0
@@ -1107,6 +1096,15 @@ do -- handle round endings other than successes
       end
       correct_flags *= opt_points_flag
       active_player.score += correct_flags
+   end
+   --
+   if  game_ending == game_ending_no
+   and game.round_time_limit > 0
+   and game.round_timer.is_zero()
+   then
+      game.end_round()
+   end
+   if game_ending != game_ending_no then -- handle player failure
       --
       -- Reveal the whole board.
       --
@@ -1114,6 +1112,7 @@ do -- handle round endings other than successes
          current_object.reveal_state = cell_reveal_state_yes
       end
       if game_ending == game_ending_quit then
+         award_failure_points()
          game.end_round()
       end
       if game_ending != game_ending_quit then
@@ -1122,6 +1121,7 @@ do -- handle round endings other than successes
          -- enjoy it before killing them.
          --
          if game_ending < game_ending_cutscene_active then
+            award_failure_points()
             game_ending = game_ending_cutscene_active
             --
             alias counter = temp_int_01

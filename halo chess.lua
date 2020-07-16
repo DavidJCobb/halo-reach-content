@@ -147,6 +147,10 @@ alias board_center    = global.object[5]
 declare board_center with network priority low
 alias temp_obj_04     = global.object[6]
 alias temp_obj_05     = global.object[7]
+alias anchor_white    = global.object[8]
+alias anchor_black    = global.object[9]
+declare anchor_white with network priority low
+declare anchor_black with network priority low
 alias active_player   = global.player[0] -- player currently making a move
 declare active_player with network priority high -- we use it in the UI
 alias temp_plr_00     = global.player[1]
@@ -173,12 +177,14 @@ declare temp_tem_00 with network priority low
 alias announced_game_start = player.number[0]
 alias ui_would_self_check  = player.number[1]
 alias turn_order           = player.number[2]
+alias did_initial_position = player.number[3] -- was the player snapped to their team's anchor at the start of the match?
 alias target_space         = player.object[0] -- piece the player is about to select (pending their timer)
 alias selection_timer = player.timer[0]
 alias announce_start_timer = player.timer[1]
 declare player.announced_game_start with network priority low
 declare player.ui_would_self_check  with network priority low = piece_type_none
 declare player.turn_order           with network priority low = -1
+declare player.did_initial_position with network priority low
 declare player.target_space         with network priority low
 declare player.selection_timer      = 2
 declare player.announce_start_timer = 5
@@ -264,8 +270,8 @@ alias override_traits = script_traits[0]
 --
 
 on init: do
-   team_black = team[0]
-   team_white = team[1]
+   team_white = team[0]
+   team_black = team[1]
    team_black.enemy   = team_white
    team_white.enemy   = team_black
    team_black.faction = faction_black
@@ -316,7 +322,7 @@ for each player do -- announce game start
    current_player.set_round_card_title("Control chess pieces to move.\nAchieve checkmate to win!")
    if current_player.announced_game_start == 0 and current_player.announce_start_timer.is_zero() then 
       send_incident(action_sack_game_start, current_player, no_player)
-      game.show_message_to(current_player, none, "Halo Chess+ v1.0.2 by Cobb!")
+      game.show_message_to(current_player, none, "Halo Chess+ v1.0.3 by Cobb!")
       current_player.announced_game_start = 1
    end
 end
@@ -326,14 +332,14 @@ if board_created == 0 then -- generate board
    --
    alias board_axis_x_offset = -10
    alias board_axis_y_offset =  10
-   alias new_row_x_offset = 10
-   alias new_row_y_offset =  0
-   alias new_row_z_offset =  0
-   alias new_col_x_offset =  0
-   alias new_col_y_offset = 10
-   alias new_col_z_offset =  0
-   alias first_cell_x_offset = -40
-   alias first_cell_y_offset = -40
+   alias new_row_x_offset =   0
+   alias new_row_y_offset = -10
+   alias new_row_z_offset =   0
+   alias new_col_x_offset =  10
+   alias new_col_y_offset =   0
+   alias new_col_z_offset =   0
+   alias first_cell_x_offset = -35
+   alias first_cell_y_offset =  35
    alias first_cell_z_offset =   0
    alias current = temp_obj_00 -- last-spawned cell
    alias working = temp_obj_01
@@ -388,6 +394,15 @@ if board_created == 0 then -- generate board
    --
    board_center = no_object
    board_center = get_random_object("board_center", no_object)
+   --
+   anchor_white = board_center.place_at_me(hill_marker, none, never_garbage_collect, 0, 0, 0, none)
+   anchor_black = board_center.place_at_me(hill_marker, none, never_garbage_collect, 0, 0, 0, none)
+   anchor_white.attach_to(board_center, 0, -50, 0, relative)
+   anchor_black.attach_to(board_center, 0, 50, 0, relative)
+   anchor_white.detach()
+   anchor_black.detach()
+   anchor_white.face_toward(anchor_black, 0, 0, 0)
+   anchor_black.face_toward(anchor_white, 0, 0, 0)
    --
    working = board_center.place_at_me(hill_marker, none, never_garbage_collect, 0, 0, 0, none)
    working.attach_to(board_center, 0, 0, 0, relative)
@@ -502,13 +517,16 @@ for each object with label "board_space_extra" do -- generate missing bipeds
                biped.remove_weapon(secondary, true)
                biped.remove_weapon(primary,   true)
                biped.copy_rotation_from(board_center, false)
+               --
+               face = biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
+               face.attach_to(biped, 0, -10, 0, relative)
+               face.detach()
                if cell.owner == faction_white then
-                  face = biped.place_at_me(hill_marker, none, none, 0, 0, 0, none)
-                  face.attach_to(biped, -20, 0, 0, relative)
+                  face.attach_to(biped, 0, 10, 0, relative)
                   face.detach()
-                  biped.face_toward(face, 0, 0, 0)
-                  face.delete()
                end
+               biped.face_toward(face, 0, 0, 0)
+               face.delete()
             end
             if cell.piece_type == piece_type_pawn then
                if species == species_human then
@@ -678,21 +696,37 @@ for each object do -- try to delete dropped weapons
 end
 
 for each player do -- force players into Monitor bipeds
+   --
+   -- This trigger handles players' initial spawns and respawns. When a player relinquishes 
+   -- control of a chess piece and becomes a Monitor again, that is because of the custom 
+   -- quick_force_active_player_to_monitor() function defined further below.
+   --
    alias biped   = temp_obj_00
    alias created = temp_obj_01
-   biped = current_player.biped
+   alias anchor  = temp_obj_02
    if current_player.biped != no_object and not current_player.biped.is_of_type(monitor) then
       biped = current_player.biped
       if biped.is_script_created == 0 then
-         created = board_center.place_at_me(monitor, none, none, 0, 0, 0, none)
-         created.attach_to(board_center, 0, 0, 20, relative)
-         created.detach()
-         if biped != no_object and not biped.is_out_of_bounds() then
+         created = no_object
+         if biped != no_object and not biped.is_out_of_bounds() and current_player.did_initial_position == 1 then
+            created = biped.place_at_me(monitor, none, none, 0, 0, 0, none)
             created.attach_to(biped, 0, 0, 6, relative)
             created.detach()
             created.copy_rotation_from(biped, true)
+            anchor = biped
+         end
+         if created == no_object then
+            temp_tem_00 = current_player.team
+            anchor = anchor_black
+            if temp_tem_00.faction == faction_white then
+               anchor = anchor_white
+            end
+            --
+            created = anchor.place_at_me(monitor, none, none, -15, 0, 15, none)
          end
          current_player.set_biped(created)
+         created.copy_rotation_from(anchor, false)
+         current_player.did_initial_position = 1
          biped.delete()
       end
    end
